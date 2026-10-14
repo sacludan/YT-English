@@ -12,13 +12,10 @@ from youtube_transcript_api import YouTubeTranscriptApi
 
 st.set_page_config(page_title="AI 隨身雙語單字神器", layout="centered", initial_sidebar_state="collapsed")
 
-# 精準 CSS：只隱藏 Fork、GitHub 與右下角吉祥物，完整保留右上角選單及深淺色切換功能
+# 隱藏右下角吉祥物與頂部工具列中不需要的按鈕，保留左上角側邊欄切換與右上角選單
 hide_extra_style = """
 <style>
-    /* 隱藏右下角的 Streamlit 吉祥物 / 徽章 */
     .stAppDeployButton {display: none !important;}
-    
-    /* 隱藏頂部工具列上的 Fork 與 GitHub 按鈕，但保留右上角的三點選單 */
     header [data-testid="stToolbar"] > div:not(:last-child) {display: none !important;}
 </style>
 """
@@ -419,7 +416,7 @@ def render_interactive_player(video_id, data):
         function startSync() {{
             setInterval(() => {{
                 if (!player || !player.getCurrentTime) return;
-                if (Date.now() < manualSeekLockUntil) return;
+                if (Date.now() - manualSeekLockUntil < 0) return;
                 const t = player.getCurrentTime();
                 
                 let idx = -1;
@@ -449,21 +446,22 @@ if os.path.exists(KEY_FILE):
     with open(KEY_FILE, "r", encoding="utf-8") as f:
         saved_key = f.read().strip()
 
-# API Key 與清除快取一樣收納在上方極簡的設定收納匣中
-with st.expander("⚙️ 系統設定 (Groq API Key / 清除快取)", expanded=(not saved_key)):
-    api_key = st.text_input("請輸入 Groq API Key (gsk_...)", value=saved_key, type="password")
+# 將 API Key 與清除快取收納在左上角的側邊欄（平常完全隱藏，點擊左上角箭頭或選單即可滑開設定）
+with st.sidebar:
+    st.markdown("### ⚙️ 系統設定")
+    api_key = st.text_input("Groq API Key (gsk_...)", value=saved_key, type="password")
     if api_key and api_key.strip() != saved_key:
         with open(KEY_FILE, "w", encoding="utf-8") as f:
             f.write(api_key.strip())
         st.success("✅ 已儲存 API Key！")
         
-    if st.button("🗑️ 清除舊快取"):
+    if st.button("🗑️ 清除快取"):
         for f in glob.glob("cache_*.json"):
             os.remove(f)
         st.session_state.pop("subs_data", None)
         st.success("✅ 已清除舊快取！")
 
-# 主畫面保持 100% 乾淨俐落
+# 主畫面維持 100% 乾淨俐落，只留下標題與輸入框
 st.subheader("🎬 隨身 YouTube 雙語單字神器")
 
 col1, col2 = st.columns([3, 1])
@@ -474,7 +472,7 @@ with col2:
 
 if run_btn:
     if not api_key or not api_key.strip().startswith("gsk_"):
-        st.error("❌ 請先展開上方「⚙️ 系統設定」輸入正確的 Groq API Key！")
+        st.error("❌ 請先從左上角側邊欄輸入正確的 Groq API Key！")
     elif not url:
         st.error("❌ 請輸入 YouTube 網址！")
     else:
