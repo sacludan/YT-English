@@ -30,7 +30,6 @@ def parse_json3_content(sub_data):
     return raw_blocks
 
 def fetch_fast_transcript(video_id):
-    # 若已有原始英文字幕快取，直接讀取，徹底避免重複向 YouTube 請求而被封鎖
     raw_cache_file = f"raw_{video_id}.json"
     if os.path.exists(raw_cache_file):
         try:
@@ -46,17 +45,17 @@ def fetch_fast_transcript(video_id):
     cookie_file = "cookies.txt"
     has_cookies = os.path.exists(cookie_file)
 
-    # 策略 1：讓 yt-dlp 直接將 json3 字幕下載到本地檔案（全程攜帶 cookies 與手機端偽裝，避開 urllib 429 封鎖）
     for f in glob.glob(f"temp_sub_{video_id}*"):
         try:
             os.remove(f)
         except Exception:
             pass
 
+    # en-orig 放最前面，確保抓到的是作者本人講的原音轉錄，而非二次翻譯改寫的英文字軌
     client_strategies = [
-        ["--extractor-args", "youtube:player_client=android,web"],
-        ["--extractor-args", "youtube:player_client=ios,mweb"],
-        []
+        ["--sub-lang", "en-orig,en,en-US,en-GB", "--extractor-args", "youtube:player_client=android,web"],
+        ["--sub-lang", "en-orig,en,en-US,en-GB", "--extractor-args", "youtube:player_client=ios,mweb"],
+        ["--sub-lang", "en-orig,en,en-US,en-GB"]
     ]
 
     for extra_args in client_strategies:
@@ -68,7 +67,6 @@ def fetch_fast_transcript(video_id):
                 "--skip-download",
                 "--write-subs",
                 "--write-auto-subs",
-                "--sub-lang", "en,en-US,en-GB,en-orig",
                 "--sub-format", "json3",
                 "-o", f"temp_sub_{video_id}",
                 f"https://www.youtube.com/watch?v={video_id}"
@@ -81,7 +79,14 @@ def fetch_fast_transcript(video_id):
             subprocess.run(cmd, capture_output=True, text=True, timeout=25)
             sub_files = glob.glob(f"temp_sub_{video_id}*.json3")
             if sub_files:
-                with open(sub_files[0], "r", encoding="utf-8") as f:
+                # 若同時有多個字軌，優先選檔名帶有 orig 的檔案
+                chosen_file = sub_files[0]
+                for sf in sub_files:
+                    if "en-orig" in sf:
+                        chosen_file = sf
+                        break
+
+                with open(chosen_file, "r", encoding="utf-8") as f:
                     sub_data = f.read()
                 raw_blocks = parse_json3_content(sub_data)
                 if raw_blocks:
@@ -94,27 +99,36 @@ def fetch_fast_transcript(video_id):
         except Exception as e:
             errors.append(str(e))
 
-    # 策略 2：備用 YouTubeTranscriptApi（若有 cookies 則掛載）
     if raw_data is None:
         try:
             api = YouTubeTranscriptApi(cookie_path=cookie_file if has_cookies else None)
             transcript_list = api.list(video_id)
+            # 優先搜尋原始發音軌 (en-orig 或非自動翻譯英文)
+            transcript = None
             try:
-                transcript = transcript_list.find_transcript(["en", "en-US", "en-GB", "en-orig"])
+                transcript = transcript_list.find_manually_created_transcript(["en", "en-US", "en-GB", "en-orig"])
             except Exception:
-                transcript = next(iter(transcript_list))
-            fetched = transcript.fetch()
-            raw_data = list(fetched)
+                try:
+                    transcript = transcript_list.find_generated_transcript(["en", "en-US", "en-GB", "en-orig"])
+                except Exception:
+                    transcript = next(iter(transcript_list))
+            
+            if transcript:
+                raw_data = list(transcript.fetch())
         except TypeError:
             try:
                 api = YouTubeTranscriptApi()
                 transcript_list = api.list(video_id)
+                transcript = None
                 try:
-                    transcript = transcript_list.find_transcript(["en", "en-US", "en-GB", "en-orig"])
+                    transcript = transcript_list.find_manually_created_transcript(["en", "en-US", "en-GB", "en-orig"])
                 except Exception:
-                    transcript = next(iter(transcript_list))
-                fetched = transcript.fetch()
-                raw_data = list(fetched)
+                    try:
+                        transcript = transcript_list.find_generated_transcript(["en", "en-US", "en-GB", "en-orig"])
+                    except Exception:
+                        transcript = next(iter(transcript_list))
+                if transcript:
+                    raw_data = list(transcript.fetch())
             except Exception as e:
                 errors.append(str(e))
         except Exception as e:
@@ -239,7 +253,6 @@ def fetch_fast_transcript(video_id):
         if refined[i]["end"] >= refined[i + 1]["start"]:
             refined[i]["end"] = round(max(refined[i]["start"] + 0.1, refined[i + 1]["start"] - 0.02), 2)
 
-    # 抓下來後立刻存成原始字幕快取
     try:
         with open(raw_cache_file, "w", encoding="utf-8") as f:
             json.dump(refined, f, ensure_ascii=False, indent=2)
@@ -567,7 +580,7 @@ def render_interactive_player(video_id, data, api_key):
                         "model": "openai/gpt-oss-120b",
                         "messages": [
                             {"role": "system", "content": "You are a professional English-Chinese dictionary. Return valid JSON only."},
-                            {"role": "user", "content": `請查詢英文單字 "${word}"，並以台灣繁體中文回傳以下 JSON 格式：{"pos":"詞性(例如 n. 或 v.)","meaning":"中文含意","examples":"1. 英文例句\\n中文翻譯"}。不要回傳其他內容。`}
+                            {"role": "user", "content": `請查詢英文單字 "${word}"，並以台灣繁體中文回傳以下 JSON格式：{"pos":"詞性(例如 n. 或 v.)","meaning":"中文含意","examples":"1. 英文例句\\n中文翻譯"}。不要回傳其他內容。`}
                         ],
                         "response_format": { "type": "json_object" },
                         "max_completion_tokens": 500
@@ -801,7 +814,7 @@ if run_btn:
             
             if not use_cache:
                 try:
-                    with st.spinner("1/2 正在智慧重組字幕並由 AI 產出流暢中文..."):
+                    with st.spinner("1/2 正在抓取原創英文字幕並由 AI 產出流暢中文..."):
                         raw_segs = fetch_fast_transcript(vid)
                     final_data = translate_Subtitles(raw_segs, api_key)
                     if any(item.get("zh_text") != "（未翻譯）" for item in final_data):
