@@ -307,15 +307,22 @@ def render_interactive_player(video_id, data, api_key):
     <!DOCTYPE html>
     <html>
     <head>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <style>
-        body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Microsoft JhengHei', sans-serif; background: #0f172a; color: #f8fafc; padding: 4px; overflow: hidden; }
-        .main-container { display: flex; flex-direction: column; gap: 10px; max-width: 800px; margin: 0 auto; height: 100vh; box-sizing: border-box; padding-bottom: 20px; }
+        /* 嚴格鎖定整個畫面視窗，禁止頁面本身滾動，徹底解決影片被裁切或頂出的問題 */
+        html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Microsoft JhengHei', sans-serif; background: #0f172a; color: #f8fafc; }
+        
+        .main-container { display: flex; flex-direction: column; height: 100vh; max-width: 800px; margin: 0 auto; box-sizing: border-box; padding: 6px; gap: 8px; }
+        
+        /* 影片區塊固定在頂部，絕對不被壓縮或滾動裁切 */
         .video-wrapper { position: relative; width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.3); flex-shrink: 0; }
         #player { width: 100%; height: 100%; }
-        .transcript-list { display: flex; flex-direction: column; gap: 8px; flex-grow: 1; overflow-y: auto; padding-right: 4px; }
+        
+        /* 字幕清單獨立擁有捲軸，在影片下方自由滾動，完全不影響上方影片 */
+        .transcript-list { display: flex; flex-direction: column; gap: 8px; flex-grow: 1; overflow-y: auto; padding-right: 2px; }
+        
         .seg-card { padding: 12px 14px; border-radius: 10px; background: #1e293b; cursor: pointer; border-left: 4px solid #334155; transition: background 0.15s ease; flex-shrink: 0; }
-        .seg-card.active { background: #1e3a8a !important; border-left: 4px solid #38bdf8 !important; box-shadow: 0 0 10px rgba(56,189,248,0.2); }
+        .seg-card.active { background: #1e3a8a !important; border-left: 4px solid #38bdf8 !important; box-shadow: 0 0 10px (56,189,248,0.2); }
         .time-tag { font-size: 11px; color: #94a3b8; font-family: monospace; margin-bottom: 4px; }
         
         .card-en { font-size: 16px; font-weight: 600; color: #f1f5f9; margin-bottom: 4px; line-height: 1.4; }
@@ -552,7 +559,8 @@ def render_interactive_player(video_id, data, api_key):
     """
     
     html_code = html_template.replace("__DATA_JSON__", data_json).replace("__API_KEY__", api_key).replace("__VIDEO_ID__", video_id)
-    components.html(html_code, height=780)
+    # 高度設為滿版視窗高度扣掉邊距，完美適配手機螢幕
+    components.html(html_code, height=840)
 
 KEY_FILE = "saved_api_key.txt"
 saved_key = ""
@@ -562,7 +570,6 @@ if os.path.exists(KEY_FILE):
 
 with st.sidebar:
     st.markdown("### 🧭 功能選單")
-    # 將側邊欄選單簡化，直接改為「📚 我的收藏」與「⚙️ API 設定」二選一
     nav_choice = st.radio("選擇頁面", ["📚 我的收藏", "⚙️ API 設定"], label_visibility="collapsed")
 
     st.markdown("---")
