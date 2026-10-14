@@ -309,18 +309,11 @@ def render_interactive_player(video_id, data, api_key):
     <head>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <style>
-        /* 強制鎖定視窗，禁止任何頁面彈性回彈與外層滾動 */
         html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Microsoft JhengHei', sans-serif; background: #0f172a; color: #f8fafc; touch-action: pan-y; }
-        
         .main-container { display: flex; flex-direction: column; width: 100%; height: 100vh; max-width: 800px; margin: 0 auto; box-sizing: border-box; padding: 6px; gap: 8px; }
-        
-        /* 影片區塊完美固定在上方，絕對不會被擠壓或裁切 */
         .video-wrapper { position: relative; width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.3); flex-shrink: 0; }
         #player { width: 100%; height: 100%; }
-        
-        /* 字幕清單獨立在下方捲動，且底部保留足夠空間讓最後一張卡片完整顯示 */
         .transcript-list { display: flex; flex-direction: column; gap: 8px; flex-grow: 1; overflow-y: auto; padding-right: 2px; padding-bottom: 24px; box-sizing: border-box; }
-        
         .seg-card { padding: 12px 14px; border-radius: 10px; background: #1e293b; cursor: pointer; border-left: 4px solid #334155; transition: background 0.15s ease; flex-shrink: 0; }
         .seg-card.active { background: #1e3a8a !important; border-left: 4px solid #38bdf8 !important; box-shadow: 0 0 10px rgba(56,189,248,0.2); }
         .time-tag { font-size: 11px; color: #94a3b8; font-family: monospace; margin-bottom: 4px; }
@@ -559,7 +552,6 @@ def render_interactive_player(video_id, data, api_key):
     """
     
     html_code = html_template.replace("__DATA_JSON__", data_json).replace("__API_KEY__", api_key).replace("__VIDEO_ID__", video_id)
-    # 完美將高度鎖定在 750px，配合內部捲軸，絕對不會被往上拉出空白或裁切
     components.html(html_code, height=750)
 
 KEY_FILE = "saved_api_key.txt"
@@ -576,6 +568,7 @@ with st.sidebar:
 
     if nav_choice == "📚 我的收藏":
         st.markdown("### 📚 收藏生字本")
+        # 透過前端 JavaScript 監聽 localStorage 變化並自動重新整理渲染，實現「秒速自動出現」！
         components.html("""
         <div style="font-family: -apple-system, sans-serif; color: inherit; font-size: 14px; height: 75vh; overflow-y: auto; padding-right: 4px;">
             <div id="vocab-list">載入中...</div>
@@ -637,6 +630,16 @@ with st.sidebar:
             }
 
             renderVocab();
+
+            // 定期自動同步檢查 localStorage，確保切換過來時立刻顯示最新單字
+            window.addEventListener('storage', (e) => {
+                if (e.key === 'yt_saved_vocab') {
+                    renderVocab();
+                }
+            });
+            // 每次頁面焦點回來時重新整理一次
+            window.addEventListener('focus', renderVocab);
+            setInterval(renderVocab, 1000);
         </script>
         """, height=600)
 
@@ -693,8 +696,8 @@ if run_btn:
             if not use_cache:
                 try:
                     with st.spinner("1/2 正在智慧重組字幕並由 AI 產出流暢中文..."):
-                        raw_segs = fetch_fast_transcript(vid)
-                    final_data = translate_Subtitles(raw_segs, api_key)
+                        raw_sgs = fetch_fast_transcript(vid)
+                    final_data = translate_Subtitles(raw_sgs, api_key)
                     if any(item.get("zh_text") != "（未翻譯）" for item in final_data):
                         with open(cache_file, "w", encoding="utf-8") as f:
                             json.dump(final_data, f, ensure_ascii=False, indent=2)
