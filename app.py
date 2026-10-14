@@ -12,21 +12,6 @@ from youtube_transcript_api import YouTubeTranscriptApi
 
 st.set_page_config(page_title="AI 隨身雙語單字神器", page_icon="🚀", layout="centered", initial_sidebar_state="expanded")
 
-VOCAB_FILE = "saved_vocabulary.json"
-
-def load_saved_vocab():
-    if os.path.exists(VOCAB_FILE):
-        try:
-            with open(VOCAB_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return []
-    return []
-
-def save_vocab_list(v_list):
-    with open(VOCAB_FILE, "w", encoding="utf-8") as f:
-        json.dump(v_list, f, ensure_ascii=False, indent=2)
-
 def extract_video_id(url):
     match = re.search(r"(?:v=|\/|youtu\.be\/|shorts\/)([0-9A-Za-z_-]{11})", url)
     return match.group(1) if match else None
@@ -480,29 +465,30 @@ def render_interactive_player(video_id, data, api_key):
             document.getElementById('modal-overlay').style.display = 'none';
         }
 
-        async function saveCurrentWord() {
+        function saveCurrentWord() {
             if (!currentWordData || !currentWordData.word) return;
             
             const saveBtn = document.getElementById('btn-save-vocab');
-            saveBtn.innerText = '⏳ 儲存中...';
+            saveBtn.innerText = '✅ 已成功加入收藏！';
             saveBtn.disabled = true;
 
+            // 直接存入瀏覽器 localStorage，完全不透過後端、不重整網頁！
+            let savedList = [];
             try {
-                // 背景非同步呼叫存檔，完全不重整頁面！
-                const res = await fetch('/?save_vocab_bg=' + encodeURIComponent(JSON.stringify(currentWordData)));
-                if (res.ok) {
-                    saveBtn.innerText = '✅ 已成功加入收藏！';
-                    setTimeout(() => {
-                        closeModal();
-                    }, 800);
-                } else {
-                    saveBtn.innerText = '❌ 儲存失敗';
-                    saveBtn.disabled = false;
-                }
-            } catch (e) {
-                saveBtn.innerText = '❌ 網路錯誤';
-                saveBtn.disabled = false;
+                const existing = localStorage.getItem('yt_saved_vocab');
+                if (existing) savedList = JSON.parse(existing);
+            } catch(e) {}
+
+            // 檢查是否重複
+            const exists = savedList.some(item => item.word.toLowerCase() === currentWordData.word.toLowerCase());
+            if (!exists) {
+                savedList.push(currentWordData);
+                localStorage.setItem('yt_saved_vocab', JSON.stringify(savedList));
             }
+
+            setTimeout(() => {
+                closeModal();
+            }, 700);
         }
 
         var tag = document.createElement('script');
@@ -547,20 +533,6 @@ def render_interactive_player(video_id, data, api_key):
     html_code = html_template.replace("__DATA_JSON__", data_json).replace("__API_KEY__", api_key).replace("__VIDEO_ID__", video_id)
     components.html(html_code, height=680)
 
-# 背景默默接收存檔請求，完全不跳頁
-query_params = st.query_params
-if "save_vocab_bg" in query_params:
-    try:
-        raw_json = query_params["save_vocab_bg"]
-        word_info = json.loads(urllib.parse.unquote(raw_json))
-        saved_list = load_saved_vocab()
-        if not any(item["word"].lower() == word_info["word"].lower() for item in saved_list):
-            saved_list.append(word_info)
-            save_vocab_list(saved_list)
-        st.query_params.clear()
-    except Exception:
-        pass
-
 KEY_FILE = "saved_api_key.txt"
 saved_key = ""
 if os.path.exists(KEY_FILE):
@@ -578,21 +550,55 @@ with st.sidebar:
 
     elif nav_choice == "📚 我的收藏":
         st.markdown("### 📚 收藏生字本")
-        # 讓收藏頁面隨時點擊時能重新讀取最新檔案
-        saved_vocab = load_saved_vocab()
-        if not saved_vocab:
-            st.info("目前還沒有收藏任何單字。")
-        else:
-            st.caption(f"共收藏 {len(saved_vocab)} 個單字")
-            for idx, item in enumerate(saved_vocab):
-                with st.expander(f"⭐ {item.get('word')} ({item.get('pos', '')})"):
-                    st.write(f"**意思：** {item.get('meaning')}")
-                    if item.get('examples'):
-                        st.code(item.get('examples'), language=None)
-                    if st.button("🗑️ 刪除", key=f"del_{idx}"):
-                        saved_vocab.pop(idx)
-                        save_vocab_list(saved_vocab)
-                        st.rerun()
+        # 透過前端 JavaScript 讀取瀏覽器 localStorage 的生字並顯示在側邊欄
+        components.html("""
+        <div style="font-family: -apple-system, sans-serif; color: inherit; font-size: 14px;">
+            <div id="vocab-list">載入中...</div>
+        </div>
+        <script>
+            function renderVocab() {
+                const container = document.getElementById('vocab-list');
+                let savedList = [];
+                try {
+                    const existing = localStorage.getItem('yt_saved_vocab');
+                    if (existing) savedList = JSON.parse(existing);
+                } catch(e) {}
+
+                if (savedList.length === 0) {
+                    container.innerHTML = '<p style="color: #94a3b8;">目前還沒有收藏任何單字。在右側影片字幕中點擊單字即可加入！</p>';
+                    return;
+                }
+
+                let html = '<p style="color: #94a3b8; font-size: 12px; margin-bottom: 10px;">共收藏 ' + savedList.length + ' 個單字</p>';
+                savedList.forEach((item, idx) => {
+                    html += `
+                        <div style="background: #1e293b; color: #f8fafc; padding: 10px; border-radius: 8px; margin-bottom: 8px; border-left: 3px solid #38bdf8;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                <strong style="color: #38bdf8; font-size: 15px;">⭐ ${item.word} <span style="font-size: 12px; color: #94a3b8;">(${item.pos})</span></strong>
+                                <button onclick="deleteVocab(${idx})" style="background: #ef4444; color: white; border: none; padding: 3px 8px; border-radius: 4px; font-size: 11px; cursor: pointer;">刪除</button>
+                            </div>
+                            <div style="font-size: 13px; margin-bottom: 4px; color: #fde047;">${item.meaning}</div>
+                            <div style="font-size: 11px; color: #cbd5e1; background: #0f172a; padding: 6px; border-radius: 4px; white-space: pre-line;">${item.examples}</div>
+                        </div>
+                    `;
+                });
+                container.innerHTML = html;
+            }
+
+            window.deleteVocab = function(idx) {
+                let savedList = [];
+                try {
+                    const existing = localStorage.getItem('yt_saved_vocab');
+                    if (existing) savedList = JSON.parse(existing);
+                } catch(e) {}
+                savedList.splice(idx, 1);
+                localStorage.setItem('yt_saved_vocab', JSON.stringify(savedList));
+                renderVocab();
+            }
+
+            renderVocab();
+        </script>
+        """, height=500)
 
     elif nav_choice == "⚙️ API 設定":
         st.markdown("### ⚙️ 系統與 API")
