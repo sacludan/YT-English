@@ -309,12 +309,12 @@ def render_interactive_player(video_id, data, api_key):
     <head>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Microsoft JhengHei', sans-serif; background: #0f172a; color: #f8fafc; padding: 4px; }
-        .main-container { display: flex; flex-direction: column; gap: 12px; max-width: 800px; margin: 0 auto; }
-        .video-wrapper { position: relative; width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+        body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Microsoft JhengHei', sans-serif; background: #0f172a; color: #f8fafc; padding: 4px; overflow: hidden; }
+        .main-container { display: flex; flex-direction: column; gap: 10px; max-width: 800px; margin: 0 auto; height: 100vh; box-sizing: border-box; padding-bottom: 20px; }
+        .video-wrapper { position: relative; width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.3); flex-shrink: 0; }
         #player { width: 100%; height: 100%; }
-        .transcript-list { display: flex; flex-direction: column; gap: 8px; max-height: 55vh; overflow-y: auto; padding-right: 4px; }
-        .seg-card { padding: 12px 14px; border-radius: 10px; background: #1e293b; cursor: pointer; border-left: 4px solid #334155; transition: background 0.15s ease; }
+        .transcript-list { display: flex; flex-direction: column; gap: 8px; flex-grow: 1; overflow-y: auto; padding-right: 4px; }
+        .seg-card { padding: 12px 14px; border-radius: 10px; background: #1e293b; cursor: pointer; border-left: 4px solid #334155; transition: background 0.15s ease; flex-shrink: 0; }
         .seg-card.active { background: #1e3a8a !important; border-left: 4px solid #38bdf8 !important; box-shadow: 0 0 10px rgba(56,189,248,0.2); }
         .time-tag { font-size: 11px; color: #94a3b8; font-family: monospace; margin-bottom: 4px; }
         
@@ -374,7 +374,7 @@ def render_interactive_player(video_id, data, api_key):
         function speakWord(wordText) {
             if (!wordText) return;
             if ('speechSynthesis' in window) {
-                window.speechSynthesis.cancel(); // 強制取消上一個未完成的語音，防止佇列卡死
+                window.speechSynthesis.cancel();
                 const utterance = new SpeechSynthesisUtterance(wordText);
                 utterance.lang = 'en-US';
                 utterance.rate = 0.9;
@@ -450,7 +450,6 @@ def render_interactive_player(video_id, data, api_key):
             saveBtn.disabled = false;
 
             currentWordData = { word: word, pos: '', meaning: '', examples: '' };
-            // 拿掉自動朗讀，改為等待使用者手動按喇叭按鈕
 
             try {
                 const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -553,7 +552,7 @@ def render_interactive_player(video_id, data, api_key):
     """
     
     html_code = html_template.replace("__DATA_JSON__", data_json).replace("__API_KEY__", api_key).replace("__VIDEO_ID__", video_id)
-    components.html(html_code, height=680)
+    components.html(html_code, height=780)
 
 KEY_FILE = "saved_api_key.txt"
 saved_key = ""
@@ -563,16 +562,13 @@ if os.path.exists(KEY_FILE):
 
 with st.sidebar:
     st.markdown("### 🧭 功能選單")
-    nav_choice = st.radio("選擇頁面", ["🏠 首頁", "📚 我的收藏", "⚙️ API 設定"], label_visibility="collapsed")
+    # 將側邊欄選單簡化，直接改為「📚 我的收藏」與「⚙️ API 設定」二選一
+    nav_choice = st.radio("選擇頁面", ["📚 我的收藏", "⚙️ API 設定"], label_visibility="collapsed")
 
     st.markdown("---")
 
-    if nav_choice == "🏠 首頁":
-        st.info("💡 **使用說明**\n1. 請先至 **⚙️ API 設定** 輸入 Groq API Key。\n2. 於右側貼上 YouTube 網址生成雙語字幕。\n3. 點擊字幕中的任何單字即可查義、點擊喇叭聽發音與加入收藏！")
-
-    elif nav_choice == "📚 我的收藏":
+    if nav_choice == "📚 我的收藏":
         st.markdown("### 📚 收藏生字本")
-        # 移除固定高度限制，改為高度 75vh 並支援獨立卷軸滑動
         components.html("""
         <div style="font-family: -apple-system, sans-serif; color: inherit; font-size: 14px; height: 75vh; overflow-y: auto; padding-right: 4px;">
             <div id="vocab-list">載入中...</div>
