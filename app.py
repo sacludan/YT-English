@@ -9,7 +9,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 from youtube_transcript_api import YouTubeTranscriptApi
 
-st.set_page_config(page_title="AI 隨身雙語單字神器 (智慧破解版)", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="AI 隨身雙語單字神器 (Cookie 破解版)", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
@@ -21,14 +21,23 @@ def extract_video_id(url):
     match = re.search(r"(?:v=|\/|youtu\.be\/|shorts\/)([0-9A-Za-z_-]{11})", url)
     return match.group(1) if match else None
 
-# --- 自動切換多重通道的字幕擷取（完美繞過雲端 IP 封鎖） ---
+# --- 支援 Cookie 驗證的字幕擷取 ---
 def fetch_fast_transcript(video_id):
     raw_data = None
     errors = []
+    
+    # 自動檢查專案資料夾裡是否有 cookies.txt
+    cookie_file = "cookies.txt"
+    has_cookies = os.path.exists(cookie_file)
 
     try:
         api = YouTubeTranscriptApi()
-        transcript_list = api.list(video_id)
+        # 如果有 Cookie 檔案，帶入驗證以完美繞過 IP 封鎖
+        if has_cookies:
+            transcript_list = api.list(video_id, cookies=cookie_file)
+        else:
+            transcript_list = api.list(video_id)
+            
         try:
             transcript = transcript_list.find_transcript(["en", "en-US", "en-GB"])
         except Exception:
@@ -39,17 +48,10 @@ def fetch_fast_transcript(video_id):
         errors.append(str(e))
 
     if raw_data is None:
-        try:
-            raw_data = YouTubeTranscriptApi.get_transcript(video_id, languages=["en", "en-US", "en-GB"])
-        except Exception as e:
-            errors.append(str(e))
-
-    if raw_data is None:
         detail = "；".join(errors)
         raise RuntimeError(
-            "YouTube 目前對此雲端 IP 進行了頻率限制。建議您可以「過 30 分鐘再試」，"
-            "或者將網址改在您自己的電腦本機（Localhost）執行即可完全順暢運作！"
-            + (f" (錯誤代碼: {detail})" if detail else "")
+            "無法取得字幕。請確認是否已將 cookies.txt 上傳至 GitHub 專案根目錄！"
+            + (f" (詳細錯誤: {detail})" if detail else "")
         )
 
     cleaned_blocks = []
@@ -169,7 +171,7 @@ def fetch_fast_transcript(video_id):
 
     return refined
 
-# --- 透過 Groq API 進行翻譯（進階單字版） ---
+# --- 透過 Groq API 進行翻譯 ---
 def call_groq_api(payload, api_key):
     url = "https://api.groq.com/openai/v1/chat/completions"
 
@@ -353,7 +355,7 @@ def render_interactive_player(video_id, data):
             }} else if (activeCard) {{
                 activeCard.classList.add('active');
             }}
-        }}
+        }
 
         const listEl = document.getElementById('transcript-list');
         subs.forEach((s, idx) => {{
@@ -420,7 +422,7 @@ if os.path.exists(KEY_FILE):
     with open(KEY_FILE, "r", encoding="utf-8") as f:
         saved_key = f.read().strip()
 
-st.subheader("🎬 隨身 YouTube 雙語單字神器 (智慧破解版)")
+st.subheader("🎬 隨身 YouTube 雙語單字神器 (Cookie 破解版)")
 
 with st.expander("⚙️ 設定 Groq API Key", expanded=(not saved_key)):
     api_key = st.text_input("請輸入 Groq API Key (gsk_...)", value=saved_key, type="password")
@@ -466,7 +468,7 @@ if run_btn:
             
             if not use_cache:
                 try:
-                    with st.spinner("1/2 正在透過多重通道擷取英文字幕..."):
+                    with st.spinner("1/2 正在透過 Cookie 驗證擷取英文字幕..."):
                         raw_segs = fetch_fast_transcript(vid)
                     final_data = translate_Subtitles(raw_segs, api_key)
                     if any(item.get("zh_text") != "（未翻譯）" for item in final_data):
