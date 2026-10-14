@@ -3,14 +3,13 @@ import re
 import json
 import glob
 import time
+import subprocess
 import urllib.request
 import urllib.error
 import streamlit as st
 import streamlit.components.v1 as components
-from youtube_transcript_api import YouTubeTranscriptApi
-import yt_dlp
 
-st.set_page_config(page_title="AI 隨身雙語單字神器", layout="centered", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="AI 隨身雙語單字神器 (安全破解版)", layout="centered", initial_sidebar_state="collapsed")
 
 def extract_video_id(url):
     match = re.search(r"(?:v=|\/|youtu\.be\/|shorts\/)([0-9A-Za-z_-]{11})", url)
@@ -20,20 +19,19 @@ def fetch_fast_transcript(video_id):
     raw_data = None
     errors = []
 
-    # 通道 1：優先嘗試用 yt-dlp 搭配 cookies.txt 抓取
-    try:
-        cookie_file = "cookies.txt"
-        ydl_opts = {
-            'skip_download': True,
-            'writesubtitles': True,
-            'writeautomaticsub': True,
-            'subtitleslangs': ['en', 'en-US', 'en-GB'],
-        }
-        if os.path.exists(cookie_file):
-            ydl_opts['cookiefile'] = cookie_file
+    # 確保 cookie 檔案存在
+    cookie_file = "cookies.txt"
+    has_cookies = os.path.exists(cookie_file)
 
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
+    # 用最安全、絕不崩潰的命令列方式調用 yt-dlp 抓取字幕
+    try:
+        cmd = ["yt-dlp", "--skip-download", "--write-subs", "--write-auto-subs", "--sub-lang", "en,en-US,en-GB", "--print-json", f"https://www.youtube.com/watch?v={video_id}"]
+        if has_cookies:
+            cmd.extend(["--cookies", cookie_file])
+
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        if result.returncode == 0 and result.stdout:
+            info = json.loads(result.stdout.strip())
             subs = info.get('subtitles') or info.get('automatic_captions')
             if subs:
                 en_subs = None
@@ -46,22 +44,17 @@ def fetch_fast_transcript(video_id):
                 
                 sub_url = None
                 for sub in en_subs:
-                    if sub.get('ext') == 'json3':
+                    if sub.get('ext') in ['json3', 'vtt', 'srv1', 'srv2', 'srv3']:
                         sub_url = sub.get('url')
                         break
-                if not sub_url:
-                    for sub in en_subs:
-                        if sub.get('ext') in ['vtt', 'srv1', 'srv2', 'srv3']:
-                            sub_url = sub.get('url')
-                            break
                 if not sub_url and en_subs:
                     sub_url = en_subs[0].get('url')
-                
+
                 if sub_url:
                     req = urllib.request.Request(sub_url, headers={'User-Agent': 'Mozilla/5.0'})
                     with urllib.request.urlopen(req) as resp:
                         sub_data = resp.read().decode('utf-8')
-                        
+
                     try:
                         json_content = json.loads(sub_data)
                         if 'events' in json_content:
@@ -78,25 +71,14 @@ def fetch_fast_transcript(video_id):
                     except Exception:
                         pass
     except Exception as e:
-        errors.append(f"yt-dlp: {str(e)}")
-
-    # 通道 2：如果 yt-dlp 失敗，自動切換回原本最穩定的 youtube-transcript-api
-    if raw_data is None:
-        try:
-            api = YouTubeTranscriptApi()
-            transcript_list = api.list(video_id)
-            try:
-                transcript = transcript_list.find_transcript(["en", "en-US", "en-GB"])
-            except Exception:
-                transcript = next(iter(transcript_list))
-            fetched = transcript.fetch()
-            raw_data = list(fetched)
-        except Exception as e:
-            errors.append(f"transcript-api: {str(e)}")
+        errors.append(str(e))
 
     if raw_data is None:
         detail = "；".join(errors)
-        raise RuntimeError(f"無法取得字幕。請確認影片是否有英文字幕。(詳細錯誤: {detail})")
+        raise RuntimeError(
+            "無法取得字幕。請確認是否已將 cookies.txt 上傳至 GitHub 專案根目錄，或是影片無英文字幕！"
+            + (f" (詳細錯誤: {detail})" if detail else "")
+        )
 
     cleaned_blocks = []
     for item in raw_data:
@@ -458,7 +440,7 @@ if os.path.exists(KEY_FILE):
     with open(KEY_FILE, "r", encoding="utf-8") as f:
         saved_key = f.read().strip()
 
-st.subheader("🎬 隨身 YouTube 雙語單字神器")
+st.subheader("🎬 隨身 YouTube 雙語單字神器 (安全破解版)")
 
 with st.expander("⚙️ 設定 Groq API Key", expanded=(not saved_key)):
     api_key = st.text_input("請輸入 Groq API Key (gsk_...)", value=saved_key, type="password")
@@ -504,7 +486,7 @@ if run_btn:
             
             if not use_cache:
                 try:
-                    with st.spinner("1/2 正在擷取英文字幕並由 AI 產出高階單字卡..."):
+                    with st.spinner("1/2 正在透過安全通道與 Cookie 驗證擷取英文字幕..."):
                         raw_segs = fetch_fast_transcript(vid)
                     final_data = translate_Subtitles(raw_segs, api_key)
                     if any(item.get("zh_text") != "（未翻譯）" for item in final_data):
