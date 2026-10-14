@@ -326,10 +326,6 @@ def translate_Subtitles(segments, api_key):
     progress_bar.empty()
     return final_results
 
-# 接收前端非同步查詢單字的 API 請求
-if "query_word" in st.query_params or "lookup_word" in st.session_state:
-    pass
-
 def render_interactive_player(video_id, data, api_key):
     data_json = json.dumps(data, ensure_ascii=False)
     html_code = f"""
@@ -347,14 +343,12 @@ def render_interactive_player(video_id, data, api_key):
         .seg-card.active {{ background: #1e3a8a !important; border-left: 4px solid #38bdf8 !important; box-shadow: 0 0 10px rgba(56,189,248,0.2); }}
         .time-tag {{ font-size: 11px; color: #94a3b8; font-family: monospace; margin-bottom: 4px; }}
         
-        /* 英文句子中的單字可點擊樣式 */
         .card-en {{ font-size: 16px; font-weight: 600; color: #f1f5f9; margin-bottom: 4px; line-height: 1.4; }}
         .clickable-word {{ cursor: pointer; border-bottom: 1px dotted #38bdf8; transition: color 0.1s; }}
         .clickable-word:hover {{ color: #38bdf8; background: rgba(56,189,248,0.1); border-radius: 3px; }}
 
         .card-zh {{ font-size: 14px; color: #cbd5e1; margin-bottom: 2px; line-height: 1.35; }}
 
-        /* 彈跳單字卡視窗 Modal */
         #modal-overlay {{ display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 9999; justify-content: center; align-items: center; }}
         .modal-box {{ background: #1e293b; border: 1px solid #334155; width: 90%; max-width: 400px; border-radius: 14px; padding: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); color: #f8fafc; position: relative; }}
         .modal-title {{ font-size: 20px; font-weight: bold; color: #38bdf8; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; }}
@@ -375,7 +369,6 @@ def render_interactive_player(video_id, data, api_key):
         <div class="transcript-list" id="transcript-list"></div>
     </div>
 
-    <!-- 單字查詢彈跳視窗 -->
     <div id="modal-overlay">
         <div class="modal-box">
             <div class="modal-title"><span id="m-word">Loading...</span> <span id="m-loading" style="font-size: 12px; color: #94a3b8; font-weight: normal;">查詢中...</span></div>
@@ -428,7 +421,6 @@ def render_interactive_player(video_id, data, api_key):
             const mins = Math.floor(s.start / 60).toString().padStart(2, '0');
             const secs = Math.floor(s.start % 60).toString().padStart(2, '0');
             
-            // 將英文句子拆解為可點擊的單字
             const words = s.en_text.split(' ').map(w => {{
                 const clean = w.replace(/[^a-zA-Z]/g, '');
                 if (clean.length > 0) {{
@@ -501,7 +493,6 @@ def render_interactive_player(video_id, data, api_key):
         function saveCurrentWord() {{
             if (!currentWordData || !currentWordData.word) return;
             
-            // 透過 Streamlit 的 query params 觸發 Python 端存檔
             const saveBtn = document.getElementById('btn-save-vocab');
             saveBtn.innerText = '✅ 已收藏！';
             saveBtn.disabled = true;
@@ -552,14 +543,12 @@ def render_interactive_player(video_id, data, api_key):
     """
     components.html(html_code, height=680)
 
-# 處理前端發送過來的單字收藏請求
 query_params = st.query_params
 if "save_vocab" in query_params:
     try:
         raw_json = query_params["save_vocab"]
         word_info = json.loads(urllib.parse.unquote(raw_json))
         saved_list = load_saved_vocab()
-        # 避免重複收藏同一個字
         if not any(item["word"].lower() == word_info["word"].lower() for item in saved_list):
             saved_list.append(word_info)
             save_vocab_list(saved_list)
@@ -572,7 +561,6 @@ if os.path.exists(KEY_FILE):
     with open(KEY_FILE, "r", encoding="utf-8") as f:
         saved_key = f.read().strip()
 
-# 左上角側邊欄：API Key 與你的「專屬生字收藏本」
 with st.sidebar:
     st.markdown("### ⚙️ 系統設定")
     api_key = st.text_input("Groq API Key (gsk_...)", value=saved_key, type="password")
@@ -604,7 +592,6 @@ with st.sidebar:
                     save_vocab_list(saved_vocab)
                     st.rerun()
 
-# 主畫面 100% 乾淨俐落
 st.subheader("🎬 隨身 YouTube 雙語單字神器")
 
 col1, col2 = st.columns([3, 1])
