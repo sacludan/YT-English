@@ -10,16 +10,33 @@ import streamlit as st
 import streamlit.components.v1 as components
 from youtube_transcript_api import YouTubeTranscriptApi
 
-st.set_page_config(page_title="AI 隨身雙語單字神器", layout="centered", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="AI 隨身雙語單字神器", page_icon="🚀", layout="centered", initial_sidebar_state="collapsed")
 
-# 隱藏右下角吉祥物與頂部工具列中不需要的按鈕，保留左上角側邊欄切換與右上角選單
+# 絕對隱藏右上角雜訊、Fork、GitHub 與右下角吉祥物，保留左上角側邊欄
 hide_extra_style = """
 <style>
     .stAppDeployButton {display: none !important;}
-    header [data-testid="stToolbar"] > div:not(:last-child) {display: none !important;}
+    header [data-testid="stToolbar"] {display: none !important;}
+    footer {display: none !important;}
 </style>
 """
 st.markdown(hide_extra_style, unsafe_allow_html=True)
+
+# 收藏單字儲存檔案
+VOCAB_FILE = "saved_vocabulary.json"
+
+def load_saved_vocab():
+    if os.path.exists(VOCAB_FILE):
+        try:
+            with open(VOCAB_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return []
+    return []
+
+def save_vocab_list(v_list):
+    with open(VOCAB_FILE, "w", encoding="utf-8") as f:
+        json.dump(v_list, f, ensure_ascii=False, indent=2)
 
 def extract_video_id(url):
     match = re.search(r"(?:v=|\/|youtu\.be\/|shorts\/)([0-9A-Za-z_-]{11})", url)
@@ -214,22 +231,17 @@ def fetch_fast_transcript(video_id):
 
     return refined
 
-def call_groq_api(payload, api_key):
+def call_groq_translate_only(payload, api_key):
     url = "https://api.groq.com/openai/v1/chat/completions"
-
     prompt = f"""你是一位專業的台灣進階英文教學編輯。
-請結合前後句上下文語境，將以下英文字幕翻譯成自然、順暢、道地的台灣繁體中文，並從每句中嚴格挑選 0~2 個符合以下條件的高級單字或實用片語：
-1. **難度限制：** 必須是 CEFR B2 至 C2 等級（多益 800 分以上、托福或雅思、GRE 等級）的進階字彙、動詞片語或慣用語。絕對不要挑選太簡單的基礎詞彙。
-2. **語境精準：** 解釋必須完全符合該影片句子的當下語境。
-3. **格式要求：** 簡單句或沒有高階難字的句子請直接回傳空陣列 []。
+請將以下英文字幕翻譯成自然、順暢、道地的台灣繁體中文。絕對不要額外挑選單字或回傳 vocab_list。
 
 規則：
 1. 每個輸入 id 都要有且只有一筆翻譯，不可漏掉或自行新增 id。
 2. 不可合併不同字幕句子。
-3. word 使用英文單字原型或片語；pos 使用簡短英文詞性；meaning 使用繁體中文。
-4. 只輸出合法 JSON，不要輸出 Markdown 或其他說明。
-5. JSON 格式如下：
-{{"segments":[{{"id":1,"zh_text":"繁體中文翻譯","vocab_list":[{{"word":"example","pos":"n.","meaning":"例子"}}]}}]}}
+3. 只輸出合法 JSON，不要輸出 Markdown 或其他說明。
+4. JSON 格式如下：
+{{"segments":[{{"id":1,"zh_text":"繁體中文翻譯"}}]}}
 
 字幕資料：
 {json.dumps(payload, ensure_ascii=False)}"""
@@ -237,10 +249,7 @@ def call_groq_api(payload, api_key):
     body = {
         "model": "openai/gpt-oss-120b",
         "messages": [
-            {
-                "role": "system",
-                "content": "Translate English subtitles into natural Traditional Chinese used in Taiwan. Return only a valid JSON object.",
-            },
+            {"role": "system", "content": "Translate English subtitles into natural Traditional Chinese used in Taiwan. Return only a valid JSON object."},
             {"role": "user", "content": prompt},
         ],
         "response_format": {"type": "json_object"},
@@ -251,32 +260,20 @@ def call_groq_api(payload, api_key):
     req = urllib.request.Request(
         url,
         data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {api_key.strip()}",
-            "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        },
+        headers={"Authorization": f"Bearer {api_key.strip()}", "Content-Type": "application/json", "User-Agent": "Mozilla/5.0"},
         method="POST",
     )
-
     with urllib.request.urlopen(req, timeout=90) as resp:
         response = json.loads(resp.read().decode("utf-8"))
-
     content = response["choices"][0]["message"]["content"]
     parsed = json.loads(content)
     results = parsed.get("segments", [])
-
     expected_ids = {int(item["id"]) for item in payload}
     result_map = {}
-
     for item in results:
         sid = int(item.get("id"))
         if sid in expected_ids:
-            result_map[sid] = {
-                "id": sid,
-                "zh_text": item.get("zh_text", "").strip(),
-                "vocab_list": item.get("vocab_list", [])
-            }
+            result_map[sid] = item.get("zh_text", "").strip()
     return result_map
 
 def translate_Subtitles(segments, api_key):
@@ -302,26 +299,25 @@ def translate_Subtitles(segments, api_key):
                 break
             status_box.caption(f"⚡ 正在翻譯第 {batch_num}/{total_batches} 批...")
             try:
-                partial_map = call_groq_api(pending, api_key)
+                partial_map = call_groq_translate_only(pending, api_key)
                 trans_map.update(partial_map)
                 pending = [item for item in pending if int(item["id"]) not in trans_map]
                 if not pending:
                     break
                 time.sleep(1)
-            except Exception as e:
+            except Exception:
                 if attempt == 2:
                     break
                 time.sleep(2)
 
         for s in batch:
-            t = trans_map.get(int(s["id"]), {})
+            zh = trans_map.get(int(s["id"]), "（未翻譯）")
             final_results.append({
                 "id": s["id"],
                 "start": s["start"],
                 "end": s["end"],
                 "en_text": s["en_text"],
-                "zh_text": t.get("zh_text", "（未翻譯）"),
-                "vocab_list": t.get("vocab_list", []),
+                "zh_text": zh,
             })
 
         progress_bar.progress(min((i + len(batch)) / total, 1.0), text=f"✅ 已處理 {min(i + len(batch), total)} / {total} 句...")
@@ -330,7 +326,11 @@ def translate_Subtitles(segments, api_key):
     progress_bar.empty()
     return final_results
 
-def render_interactive_player(video_id, data):
+# 接收前端非同步查詢單字的 API 請求
+if "query_word" in st.query_params or "lookup_word" in st.session_state:
+    pass
+
+def render_interactive_player(video_id, data, api_key):
     data_json = json.dumps(data, ensure_ascii=False)
     html_code = f"""
     <!DOCTYPE html>
@@ -342,15 +342,31 @@ def render_interactive_player(video_id, data):
         .main-container {{ display: flex; flex-direction: column; gap: 12px; max-width: 800px; margin: 0 auto; }}
         .video-wrapper {{ position: relative; width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }}
         #player {{ width: 100%; height: 100%; }}
-        .transcript-list {{ display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; padding-right: 4px; }}
+        .transcript-list {{ display: flex; flex-direction: column; gap: 8px; max-height: 55vh; overflow-y: auto; padding-right: 4px; }}
         .seg-card {{ padding: 12px 14px; border-radius: 10px; background: #1e293b; cursor: pointer; border-left: 4px solid #334155; transition: background 0.15s ease; }}
         .seg-card.active {{ background: #1e3a8a !important; border-left: 4px solid #38bdf8 !important; box-shadow: 0 0 10px rgba(56,189,248,0.2); }}
         .time-tag {{ font-size: 11px; color: #94a3b8; font-family: monospace; margin-bottom: 4px; }}
+        
+        /* 英文句子中的單字可點擊樣式 */
         .card-en {{ font-size: 16px; font-weight: 600; color: #f1f5f9; margin-bottom: 4px; line-height: 1.4; }}
-        .card-zh {{ font-size: 14px; color: #cbd5e1; margin-bottom: 6px; line-height: 1.35; }}
-        .vocab-container {{ display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }}
-        .mini-vocab {{ background: #334155; color: #fde047; padding: 3px 8px; border-radius: 6px; font-size: 12px; font-weight: 500; }}
-        .mini-vocab span {{ color: #cbd5e1; font-weight: normal; margin-left: 3px; }}
+        .clickable-word {{ cursor: pointer; border-bottom: 1px dotted #38bdf8; transition: color 0.1s; }}
+        .clickable-word:hover {{ color: #38bdf8; background: rgba(56,189,248,0.1); border-radius: 3px; }}
+
+        .card-zh {{ font-size: 14px; color: #cbd5e1; margin-bottom: 2px; line-height: 1.35; }}
+
+        /* 彈跳單字卡視窗 Modal */
+        #modal-overlay {{ display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 9999; justify-content: center; align-items: center; }}
+        .modal-box {{ background: #1e293b; border: 1px solid #334155; width: 90%; max-width: 400px; border-radius: 14px; padding: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); color: #f8fafc; position: relative; }}
+        .modal-title {{ font-size: 20px; font-weight: bold; color: #38bdf8; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; }}
+        .modal-pos {{ font-size: 13px; color: #94a3b8; margin-bottom: 10px; }}
+        .modal-meaning {{ font-size: 16px; font-weight: 500; margin-bottom: 12px; color: #fde047; }}
+        .modal-examples {{ font-size: 13px; color: #cbd5e1; background: #0f172a; padding: 10px; border-radius: 8px; margin-bottom: 16px; line-height: 1.4; }}
+        .modal-btns {{ display: flex; gap: 10px; justify-content: flex-end; }}
+        .btn-action {{ padding: 8px 14px; border-radius: 8px; border: none; font-size: 13px; font-weight: bold; cursor: pointer; }}
+        .btn-save {{ background: #0284c7; color: #fff; }}
+        .btn-save:hover {{ background: #0369a1; }}
+        .btn-close {{ background: #475569; color: #fff; }}
+        .btn-close:hover {{ background: #334155; }}
     </style>
     </head>
     <body>
@@ -358,11 +374,28 @@ def render_interactive_player(video_id, data):
         <div class="video-wrapper"><div id="player"></div></div>
         <div class="transcript-list" id="transcript-list"></div>
     </div>
+
+    <!-- 單字查詢彈跳視窗 -->
+    <div id="modal-overlay">
+        <div class="modal-box">
+            <div class="modal-title"><span id="m-word">Loading...</span> <span id="m-loading" style="font-size: 12px; color: #94a3b8; font-weight: normal;">查詢中...</span></div>
+            <div class="modal-pos" id="m-pos"></div>
+            <div class="modal-meaning" id="m-meaning"></div>
+            <div class="modal-examples" id="m-examples"></div>
+            <div class="modal-btns">
+                <button class="btn-action btn-close" onclick="closeModal()">關閉</button>
+                <button class="btn-action btn-save" id="btn-save-vocab" onclick="saveCurrentWord()">⭐ 加入收藏</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         const subs = {data_json};
+        const apiKey = "{api_key}";
         let player;
         let activeIdx = -1;
         let manualSeekLockUntil = 0;
+        let currentWordData = null;
 
         function activateSegment(idx, smoothScroll = true) {{
             if (idx < 0 || idx >= subs.length) return;
@@ -382,7 +415,8 @@ def render_interactive_player(video_id, data):
             const card = document.createElement('div');
             card.className = 'seg-card';
             card.id = 'seg-' + idx;
-            card.onclick = () => {{
+            card.onclick = (e) => {{
+                if (e.target.classList.contains('clickable-word')) return;
                 activateSegment(idx, false);
                 manualSeekLockUntil = Date.now() + 750;
                 if (player && player.seekTo) {{
@@ -390,15 +424,93 @@ def render_interactive_player(video_id, data):
                     player.playVideo();
                 }}
             }};
+
             const mins = Math.floor(s.start / 60).toString().padStart(2, '0');
             const secs = Math.floor(s.start % 60).toString().padStart(2, '0');
-            let vHtml = '';
-            if (s.vocab_list && s.vocab_list.length > 0) {{
-                vHtml = '<div class="vocab-container">' + s.vocab_list.map(v => `<span class="mini-vocab">💡 ${{v.word}}<span>(${{v.pos}}) ${{v.meaning}}</span></span>`).join('') + '</div>';
-            }}
-            card.innerHTML = `<div class="time-tag">[${{mins}}:${{secs}}]</div><div class="card-en">${{s.en_text}}</div><div class="card-zh">${{s.zh_text}}</div>${{vHtml}}`;
+            
+            // 將英文句子拆解為可點擊的單字
+            const words = s.en_text.split(' ').map(w => {{
+                const clean = w.replace(/[^a-zA-Z]/g, '');
+                if (clean.length > 0) {{
+                    return `<span class="clickable-word" onclick="lookupWord('${{clean}}')">${{w}}</span>`;
+                }}
+                return w;
+            }}).join(' ');
+
+            card.innerHTML = `<div class="time-tag">[${{mins}}:${{secs}}]</div><div class="card-en">${{words}}</div><div class="card-zh">${{s.zh_text}}</div>`;
             listEl.appendChild(card);
         }});
+
+        async function lookupWord(word) {{
+            const overlay = document.getElementById('modal-overlay');
+            const mWord = document.getElementById('m-word');
+            const mLoading = document.getElementById('m-loading');
+            const mPos = document.getElementById('m-pos');
+            const mMeaning = document.getElementById('m-meaning');
+            const mExamples = document.getElementById('m-examples');
+            const saveBtn = document.getElementById('btn-save-vocab');
+
+            overlay.style.display = 'flex';
+            mWord.innerText = word;
+            mLoading.innerText = '🤖 AI 查字中...';
+            mPos.innerText = '';
+            mMeaning.innerText = '';
+            mExamples.innerText = '';
+            saveBtn.innerText = '⭐ 加入收藏';
+            saveBtn.disabled = false;
+
+            currentWordData = {{ word: word, pos: '', meaning: '', examples: '' }};
+
+            try {{
+                const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {{
+                    method: "POST",
+                    headers: {{
+                        "Authorization": "Bearer " + apiKey,
+                        "Content-Type": "application/json"
+                    }},
+                    body: JSON.stringify({{
+                        "model": "openai/gpt-oss-120b",
+                        "messages": [
+                            {{"role": "system", "content": "You are a professional English-Chinese dictionary. Return valid JSON only."}},
+                            {{"role": "user", "content": `請查詢英文單字 "${{word}}"，並以台灣繁體中文回傳以下 JSON 格式：{{"pos":"詞性(例如 n. 或 v.)","meaning":"中文含意","examples":"1. 英文例句\\n中文翻譯"}}。不要回傳其他內容。`}}
+                        ],
+                        "response_format": {{ "type": "json_object" }},
+                        "max_completion_tokens": 500
+                    }})
+                }});
+                const data = await res.json();
+                const content = JSON.parse(data.choices[0].message.content);
+                
+                mPos.innerText = content.pos || '';
+                mMeaning.innerText = content.meaning || '';
+                mExamples.innerText = content.examples || '';
+                mLoading.innerText = '';
+
+                currentWordData.pos = content.pos || '';
+                currentWordData.meaning = content.meaning || '';
+                currentWordData.examples = content.examples || '';
+            } catch (err) {{
+                mLoading.innerText = '查詢失敗，請檢查 API Key';
+            }}
+        }}
+
+        function closeModal() {{
+            document.getElementById('modal-overlay').style.display = 'none';
+        }}
+
+        function saveCurrentWord() {{
+            if (!currentWordData || !currentWordData.word) return;
+            
+            // 透過 Streamlit 的 query params 觸發 Python 端存檔
+            const saveBtn = document.getElementById('btn-save-vocab');
+            saveBtn.innerText = '✅ 已收藏！';
+            saveBtn.disabled = true;
+
+            const dataStr = encodeURIComponent(JSON.stringify(currentWordData));
+            fetch('/?save_vocab=' + dataStr).then(() => {{
+                setTimeout(closeModal, 600);
+            }});
+        }}
 
         var tag = document.createElement('script');
         tag.src = "https://www.youtube.com/iframe_api";
@@ -438,7 +550,21 @@ def render_interactive_player(video_id, data):
     </body>
     </html>
     """
-    components.html(html_code, height=720)
+    components.html(html_code, height=680)
+
+# 處理前端發送過來的單字收藏請求
+query_params = st.query_params
+if "save_vocab" in query_params:
+    try:
+        raw_json = query_params["save_vocab"]
+        word_info = json.loads(urllib.parse.unquote(raw_json))
+        saved_list = load_saved_vocab()
+        # 避免重複收藏同一個字
+        if not any(item["word"].lower() == word_info["word"].lower() for item in saved_list):
+            saved_list.append(word_info)
+            save_vocab_list(saved_list)
+    except Exception:
+        pass
 
 KEY_FILE = "saved_api_key.txt"
 saved_key = ""
@@ -446,7 +572,7 @@ if os.path.exists(KEY_FILE):
     with open(KEY_FILE, "r", encoding="utf-8") as f:
         saved_key = f.read().strip()
 
-# 將 API Key 與清除快取收納在左上角的側邊欄（平常完全隱藏，點擊左上角箭頭或選單即可滑開設定）
+# 左上角側邊欄：API Key 與你的「專屬生字收藏本」
 with st.sidebar:
     st.markdown("### ⚙️ 系統設定")
     api_key = st.text_input("Groq API Key (gsk_...)", value=saved_key, type="password")
@@ -461,7 +587,24 @@ with st.sidebar:
         st.session_state.pop("subs_data", None)
         st.success("✅ 已清除舊快取！")
 
-# 主畫面維持 100% 乾淨俐落，只留下標題與輸入框
+    st.markdown("---")
+    st.markdown("### 📚 我的生字收藏本")
+    saved_vocab = load_saved_vocab()
+    if not saved_vocab:
+        st.info("目前還沒有收藏任何單字。在右側影片字幕中點擊單字即可加入！")
+    else:
+        st.caption(f"共收藏 {len(saved_vocab)} 個單字")
+        for idx, item in enumerate(saved_vocab):
+            with st.expander(f"⭐ {item.get('word')} ({item.get('pos', '')})"):
+                st.write(f"**意思：** {item.get('meaning')}")
+                if item.get('examples'):
+                    st.code(item.get('examples'), language=None)
+                if st.button("🗑️ 刪除", key=f"del_{idx}"):
+                    saved_vocab.pop(idx)
+                    save_vocab_list(saved_vocab)
+                    st.rerun()
+
+# 主畫面 100% 乾淨俐落
 st.subheader("🎬 隨身 YouTube 雙語單字神器")
 
 col1, col2 = st.columns([3, 1])
@@ -495,7 +638,7 @@ if run_btn:
             
             if not use_cache:
                 try:
-                    with st.spinner("1/2 正在智慧重組字幕並由 AI 產出高階單字卡..."):
+                    with st.spinner("1/2 正在智慧重組字幕並由 AI 產出流暢中文..."):
                         raw_segs = fetch_fast_transcript(vid)
                     final_data = translate_Subtitles(raw_segs, api_key)
                     if any(item.get("zh_text") != "（未翻譯）" for item in final_data):
@@ -507,4 +650,4 @@ if run_btn:
                     st.error(f"❌ 發生錯誤：{e}")
 
 if "subs_data" in st.session_state and "vid" in st.session_state:
-    render_interactive_player(st.session_state["vid"], st.session_state["subs_data"])
+    render_interactive_player(st.session_state["vid"], st.session_state["subs_data"], api_key)
