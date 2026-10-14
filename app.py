@@ -9,7 +9,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 from youtube_transcript_api import YouTubeTranscriptApi
 
-st.set_page_config(page_title="AI 支援 YouTube 雙語單字神器 (Groq 完整版)", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="AI 隨身雙語單字神器 (Groq 進階單字版)", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
@@ -174,21 +174,22 @@ def fetch_fast_transcript(video_id):
 
     return refined
 
-# --- 透過 Groq API 進行翻譯（已加入 User-Agent 瀏覽器偽裝以避開 403 阻擋） ---
+# --- 透過 Groq API 進行翻譯（已升級為進階單字特訓 Prompt） ---
 def call_groq_api(payload, api_key):
     url = "https://api.groq.com/openai/v1/chat/completions"
 
-    prompt = f"""你是一位專業的台灣英文教學編輯。
-請結合同一批字幕的前後文，將英文翻譯成自然、準確、道地的台灣繁體中文。
+    prompt = f"""你是一位專業的台灣進階英文教學編輯。
+請結合前後句上下文語境，將以下英文字幕翻譯成自然、順暢、道地的台灣繁體中文，並從每句中嚴格挑選 0~2 個符合以下條件的高級單字或實用片語：
+1. **難度限制：** 必須是 CEFR B2 至 C2 等級（相當於多益 800 分以上、托福或雅思、GRE 等級）的進階字彙、動詞片語（Phrasal Verbs）或道地慣用語（Idioms）。**絕對不要挑選太簡單的基礎詞彙**（例如：news, source, quarter, video, game, play 等國中常見字）。
+2. **語境精準：** 解釋必須完全符合該影片句子的當下語境。
+3. **格式要求：** 簡單句或沒有高階難字的句子請直接回傳空陣列 []。
 
 規則：
 1. 每個輸入 id 都要有且只有一筆翻譯，不可漏掉或自行新增 id。
 2. 不可合併不同字幕句子。
-3. 每句挑選 0 至 2 個實用的中高級（B2-C2）或值得學習的單字片語。
-4. 簡單句可以使用空陣列。
-5. word 使用英文單字原型或片語；pos 使用簡短英文詞性；meaning 使用繁體中文。
-6. 只輸出合法 JSON，不要輸出 Markdown 或其他說明。
-7. JSON 格式如下：
+3. word 使用英文單字原型或片語；pos 使用簡短英文詞性；meaning 使用繁體中文。
+4. 只輸出合法 JSON，不要輸出 Markdown 或其他說明。
+5. JSON 格式如下：
 {{"segments":[{{"id":1,"zh_text":"繁體中文翻譯","vocab_list":[{{"word":"example","pos":"n.","meaning":"例子"}}]}}]}}
 
 字幕資料：
@@ -217,7 +218,7 @@ def call_groq_api(payload, api_key):
         headers={
             "Authorization": f"Bearer {api_key.strip()}",
             "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"  # 關鍵偽裝
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         },
         method="POST",
     )
@@ -374,7 +375,7 @@ def translate_Subtitles(segments, api_key):
 
         progress_bar.progress(
             min((i + len(batch)) / total, 1.0),
-            text=f"✅ 已完成 {min(i + len(batch), total)} / {total} 句...",
+            text=f"✅ 已處理 {min(i + len(batch), total)} / {total} 句...",
         )
 
     status_box.empty()
@@ -532,7 +533,7 @@ if os.path.exists(KEY_FILE):
     with open(KEY_FILE, "r", encoding="utf-8") as f:
         saved_key = f.read().strip()
 
-st.subheader("🎬 隨身 YouTube 雙語單字神器 (Groq 最終完整版)")
+st.subheader("🎬 隨身 YouTube 雙語單字神器 (Groq 進階單字版)")
 
 with st.expander("⚙️ 設定 Groq API Key 或管理快取", expanded=(not saved_key)):
     api_key = st.text_input("請輸入 Groq API Key (gsk_...)", value=saved_key, type="password")
@@ -541,7 +542,7 @@ with st.expander("⚙️ 設定 Groq API Key 或管理快取", expanded=(not sav
             f.write(api_key.strip())
         st.success("✅ 已儲存 Groq API Key！")
         
-    if st.button("🗑️ 清除舊的快取紀錄"):
+    if st.button("🗑️ 清除舊的快取紀錄（切換難度必點！）"):
         for f in glob.glob("cache_*.json"):
             os.remove(f)
         st.session_state.pop("subs_data", None)
