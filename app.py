@@ -12,6 +12,21 @@ from youtube_transcript_api import YouTubeTranscriptApi
 
 st.set_page_config(page_title="AI 隨身雙語單字神器", layout="centered", initial_sidebar_state="collapsed")
 
+# 透過精準 CSS：隱藏 GitHub、Fork、右下角吉祥物，但保留右上角選單與深淺色切換
+hide_extra_style = """
+<style>
+    /* 隱藏右下角的 Streamlit 吉祥物 / 徽章 */
+    .stAppDeployButton {display: none !important;}
+    
+    /* 隱藏頂部工具列上的 Fork 與 GitHub 按鈕（保留選單按鈕） */
+    header [data-testid="stToolbar"] {visibility: hidden;}
+    
+    /* 讓右上角的三個點選單依然可以正常點擊展開 */
+    header [data-testid="stDecoration"] {display: none;}
+</style>
+"""
+st.markdown(hide_extra_style, unsafe_allow_html=True)
+
 def extract_video_id(url):
     match = re.search(r"(?:v=|\/|youtu\.be\/|shorts\/)([0-9A-Za-z_-]{11})", url)
     return match.group(1) if match else None
@@ -437,7 +452,7 @@ if os.path.exists(KEY_FILE):
     with open(KEY_FILE, "r", encoding="utf-8") as f:
         saved_key = f.read().strip()
 
-# 將 API Key 設定收納在側邊欄（平常完全隱藏，點擊右上角選單或滑開側邊欄才能看到）
+# API Key 與清除快取收納在側邊欄
 with st.sidebar:
     st.markdown("### ⚙️ 系統設定")
     api_key = st.text_input("Groq API Key (gsk_...)", value=saved_key, type="password")
@@ -452,7 +467,7 @@ with st.sidebar:
         st.session_state.pop("subs_data", None)
         st.success("✅ 已清除舊快取！")
 
-# 主畫面保持極簡：只有標題與乾淨的網址輸入、生成按鈕
+# 主畫面維持 100% 乾淨俐落
 st.subheader("🎬 隨身 YouTube 雙語單字神器")
 
 col1, col2 = st.columns([3, 1])
