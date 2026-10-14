@@ -8,6 +8,7 @@ import urllib.request
 import urllib.error
 import streamlit as st
 import streamlit.components.v1 as components
+from youtube_transcript_api import YouTubeTranscriptApi
 
 st.set_page_config(page_title="AI 隨身雙語單字神器", layout="centered", initial_sidebar_state="collapsed")
 
@@ -71,126 +72,38 @@ def fetch_fast_transcript(video_id):
         errors.append(str(e))
 
     if raw_data is None:
-        detail = "；".join(errors)
-        raise RuntimeError(
-            "無法取得字幕。請確認是否已將 cookies.txt 上傳至 GitHub 專案根目錄！"
-            + (f" (詳細錯誤: {detail})" if detail else "")
-        )
+        try:
+            api = YouTubeTranscriptApi()
+            transcript_list = api.list(video_id)
+            try:
+                transcript = transcript_list.find_transcript(["en", "en-US", "en-GB"])
+            except Exception:
+                transcript = next(iter(transcript_list))
+            fetched = transcript.fetch()
+            raw_data = list(fetched)
+        except Exception as e:
+            errors.append(str(e))
 
-    cleaned_blocks = []
-    for item in raw_data:
+    if raw_data is None:
+        detail = "；".join(errors)
+        raise RuntimeError(f"無法取得字幕。(詳細錯誤: {detail})")
+
+    refined = []
+    for idx, item in enumerate(raw_data):
         text = str(item["text"] if isinstance(item, dict) else item.text).replace("\n", " ").strip()
         start = float(item["start"] if isinstance(item, dict) else item.start)
         duration_value = item.get("duration") if isinstance(item, dict) else getattr(item, "duration", None)
         if duration_value is None:
             end_value = item.get("end") if isinstance(item, dict) else getattr(item, "end", None)
-            duration_value = max(0.05, float(end_value) - start) if end_value is not None else 1.0
-        duration = float(duration_value)
-        if text:
-            cleaned_blocks.append({"text": text, "start": start, "end": start + duration})
-
-    for i in range(len(cleaned_blocks) - 1):
-        if cleaned_blocks[i]["end"] > cleaned_blocks[i + 1]["start"]:
-            cleaned_blocks[i]["end"] = cleaned_blocks[i + 1]["start"]
-
-    words_with_time = []
-    for b in cleaned_blocks:
-        words = b["text"].split()
-        if not words:
-            continue
-        dur = max(0.05, b["end"] - b["start"])
-        word_dur = dur / len(words)
-        for i, w in enumerate(words):
-            words_with_time.append({
-                "word": w,
-                "start": b["start"] + i * word_dur,
-                "end": b["start"] + (i + 1) * word_dur
-            })
-
-    NO_END_WORDS = {
-        'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from', 'about', 'into', 'than', 'after', 'before',
-        'the', 'a', 'an', 'my', 'your', 'his', 'her', 'its', 'our', 'their', 'this', 'that', 'these', 'those',
-        'and', 'or', 'but', 'if', 'because', 'as', 'until', 'while', 'who', 'whom', 'whose', 'which', 'what', 'when', 'where', 'how',
-        'is', 'am', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did',
-        'will', 'would', 'shall', 'should', 'can', 'could', 'may', 'might', 'must',
-        'very', 'too', 'so', 'not', 'no', 'more', 'most', 'quite', 'pretty', 'much', 'such',
-        'early', 'late', 'mid', 'next', 'last', 'every', 'each', 'another', 'other', 'new', 'old', 'good', 'best', 'first', 'second'
-    }
-    CLAUSE_STARTERS = {
-        'because', 'although', 'though', 'while', 'if', 'unless', 'until', 'since',
-        'when', 'whenever', 'where', 'wherever', 'which', 'who', 'whom', 'whose', 'whether'
-    }
-    ABBREVS = {'mr.', 'mrs.', 'ms.', 'dr.', 'st.', 'u.s.', 'inc.', 'co.', 'vs.', 'etc.', 'e.g.', 'i.e.'}
-
-    def is_sentence_end(word_str):
-        return word_str.endswith(('.', '?', '!')) and word_str.lower() not in ABBREVS
-
-    def is_clause_end(word_str):
-        return word_str.endswith((',', ';', ':', '—', '-'))
-
-    refined = []
-    curr = []
-    seg_id = 1
-    total_w = len(words_with_time)
-
-    for i, w in enumerate(words_with_time):
-        curr.append(w)
-        w_str = w["word"]
-        clean_w = re.sub(r'[^\w\']', '', w_str.lower())
+            duration_value = max(0.5, float(end_value) - start) if end_value is not None else 2.0
         
-        next_w = words_with_time[i + 1] if i + 1 < total_w else None
-        next_clean = re.sub(r'[^\w\']', '', next_w["word"].lower()) if next_w else ""
-
-        punct_coming_soon = False
-        for look_idx in range(1, 4):
-            if i + look_idx < total_w:
-                future_w = words_with_time[i + look_idx]["word"]
-                if is_sentence_end(future_w) or is_clause_end(future_w):
-                    punct_coming_soon = True
-                    break
-
-        should_split = False
-
-        if is_sentence_end(w_str):
-            should_split = True
-        elif is_clause_end(w_str) and len(curr) >= 5:
-            should_split = True
-        elif not punct_coming_soon and len(curr) >= 9 and next_clean in CLAUSE_STARTERS and clean_w not in NO_END_WORDS:
-            should_split = True
-        elif not punct_coming_soon and len(curr) >= 12 and next_clean in {'and', 'but', 'so', 'or'} and clean_w not in NO_END_WORDS:
-            should_split = True
-        elif not punct_coming_soon and len(curr) >= 16 and clean_w not in NO_END_WORDS:
-            should_split = True
-        elif len(curr) >= 24 and clean_w not in NO_END_WORDS:
-            should_split = True
-        elif len(curr) >= 28:
-            should_split = True
-
-        if should_split:
+        if text:
             refined.append({
-                "id": seg_id,
-                "start": round(curr[0]["start"], 2),
-                "end": round(curr[-1]["end"], 2),
-                "en_text": " ".join([x["word"] for x in curr])
+                "id": idx + 1,
+                "start": round(start, 2),
+                "end": round(start + float(duration_value), 2),
+                "en_text": text
             })
-            seg_id += 1
-            curr = []
-
-    if curr:
-        if len(curr) <= 2 and refined:
-            refined[-1]["end"] = round(curr[-1]["end"], 2)
-            refined[-1]["en_text"] += " " + " ".join([x["word"] for x in curr])
-        else:
-            refined.append({
-                "id": seg_id,
-                "start": round(curr[0]["start"], 2),
-                "end": round(curr[-1]["end"], 2),
-                "en_text": " ".join([x["word"] for x in curr])
-            })
-
-    for i in range(len(refined) - 1):
-        if refined[i]["end"] >= refined[i + 1]["start"]:
-            refined[i]["end"] = round(max(refined[i]["start"] + 0.1, refined[i + 1]["start"] - 0.02), 2)
 
     return refined
 
@@ -323,9 +236,13 @@ def render_interactive_player(video_id, data):
         .video-wrapper {{ position: relative; width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }}
         #player {{ width: 100%; height: 100%; }}
         .transcript-list {{ display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; padding-right: 4px; }}
-        .seg-card {{ padding: 12px 14px; border-radius: 10px; background: #1e293b; cursor: pointer; border-left: 4px solid #334155; transition: all 0.2s ease; }}
-        .seg-card:hover {{ background: #2563eb; border-left-color: #60a5fa; }}
-        .seg-card.active {{ background: #1e3a8a; border-left: 4px solid #38bdf8; box-shadow: 0 0 10px rgba(56,189,248,0.2); }}
+        
+        /* 統一卡片基礎樣式，移除會衝突的 hover 顏色 */
+        .seg-card {{ padding: 12px 14px; border-radius: 10px; background: #1e293b; cursor: pointer; border-left: 4px solid #334155; transition: background 0.15s ease; }}
+        
+        /* 唯一的亮藍色 active 狀態：不管是點擊還是自動跟隨，全部共用這一個樣式 */
+        .seg-card.active {{ background: #1e3a8a !important; border-left: 4px solid #38bdf8 !important; box-shadow: 0 0 10px rgba(56,189,248,0.2); }}
+        
         .time-tag {{ font-size: 11px; color: #94a3b8; font-family: monospace; margin-bottom: 4px; }}
         .card-en {{ font-size: 16px; font-weight: 600; color: #f1f5f9; margin-bottom: 4px; line-height: 1.4; }}
         .card-zh {{ font-size: 14px; color: #cbd5e1; margin-bottom: 6px; line-height: 1.35; }}
@@ -345,11 +262,12 @@ def render_interactive_player(video_id, data):
         let activeIdx = -1;
         let manualSeekLockUntil = 0;
 
+        // 統一的啟動/高亮函式：點擊與自動同步共用此邏輯
         function activateSegment(idx, smoothScroll = true) {{
             if (idx < 0 || idx >= subs.length) return;
             activeIdx = idx;
             
-            // 絕對排他：先強制清空所有卡片的 active，再只幫當前索引加上 active
+            // 強制先清除畫面中所有卡片的 active 狀態，絕對不允許重複亮起
             document.querySelectorAll('.seg-card').forEach(el => el.classList.remove('active'));
             
             const activeCard = document.getElementById('seg-' + idx);
@@ -366,6 +284,8 @@ def render_interactive_player(video_id, data):
             const card = document.createElement('div');
             card.className = 'seg-card';
             card.id = 'seg-' + idx;
+            
+            // 點擊事件：直接呼叫統一的 activateSegment 並跳轉影片
             card.onclick = () => {{
                 activateSegment(idx, false);
                 manualSeekLockUntil = Date.now() + 750;
@@ -374,6 +294,7 @@ def render_interactive_player(video_id, data):
                     player.playVideo();
                 }}
             }};
+
             const mins = Math.floor(s.start / 60).toString().padStart(2, '0');
             const secs = Math.floor(s.start % 60).toString().padStart(2, '0');
             let vHtml = '';
@@ -382,7 +303,7 @@ def render_interactive_player(video_id, data):
             }}
             card.innerHTML = `<div class="time-tag">[${{mins}}:${{secs}}]</div><div class="card-en">${{s.en_text}}</div><div class="card-zh">${{s.zh_text}}</div>${{vHtml}}`;
             listEl.appendChild(card);
-        }});
+        }));
 
         var tag = document.createElement('script');
         tag.src = "https://www.youtube.com/iframe_api";
@@ -403,7 +324,7 @@ def render_interactive_player(video_id, data):
                 if (Date.now() < manualSeekLockUntil) return;
                 const t = player.getCurrentTime();
                 
-                // 絕對嚴格的單一區間對應：只抓當前秒數落在哪一個分段的 [start, next_start) 之間
+                // 自動同步計時器：精準比對區間，並透過統一的 activateSegment 處理
                 let idx = -1;
                 for (let i = 0; i < subs.length; i++) {{
                     const currentStart = subs[i].start;
