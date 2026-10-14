@@ -22,7 +22,6 @@ hide_extra_style = """
 """
 st.markdown(hide_extra_style, unsafe_allow_html=True)
 
-# 收藏單字儲存檔案
 VOCAB_FILE = "saved_vocabulary.json"
 
 def load_saved_vocab():
@@ -328,39 +327,41 @@ def translate_Subtitles(segments, api_key):
 
 def render_interactive_player(video_id, data, api_key):
     data_json = json.dumps(data, ensure_ascii=False)
-    html_code = f"""
+    
+    # 改用標準字串賦值並透過 .replace 塞入變數，徹底避開 Python f-string 對大括號的語法審查
+    html_template = """
     <!DOCTYPE html>
     <html>
     <head>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body {{ margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Microsoft JhengHei', sans-serif; background: #0f172a; color: #f8fafc; padding: 4px; }}
-        .main-container {{ display: flex; flex-direction: column; gap: 12px; max-width: 800px; margin: 0 auto; }}
-        .video-wrapper {{ position: relative; width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }}
-        #player {{ width: 100%; height: 100%; }}
-        .transcript-list {{ display: flex; flex-direction: column; gap: 8px; max-height: 55vh; overflow-y: auto; padding-right: 4px; }}
-        .seg-card {{ padding: 12px 14px; border-radius: 10px; background: #1e293b; cursor: pointer; border-left: 4px solid #334155; transition: background 0.15s ease; }}
-        .seg-card.active {{ background: #1e3a8a !important; border-left: 4px solid #38bdf8 !important; box-shadow: 0 0 10px rgba(56,189,248,0.2); }}
-        .time-tag {{ font-size: 11px; color: #94a3b8; font-family: monospace; margin-bottom: 4px; }}
+        body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Microsoft JhengHei', sans-serif; background: #0f172a; color: #f8fafc; padding: 4px; }
+        .main-container { display: flex; flex-direction: column; gap: 12px; max-width: 800px; margin: 0 auto; }
+        .video-wrapper { position: relative; width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+        #player { width: 100%; height: 100%; }
+        .transcript-list { display: flex; flex-direction: column; gap: 8px; max-height: 55vh; overflow-y: auto; padding-right: 4px; }
+        .seg-card { padding: 12px 14px; border-radius: 10px; background: #1e293b; cursor: pointer; border-left: 4px solid #334155; transition: background 0.15s ease; }
+        .seg-card.active { background: #1e3a8a !important; border-left: 4px solid #38bdf8 !important; box-shadow: 0 0 10px rgba(56,189,248,0.2); }
+        .time-tag { font-size: 11px; color: #94a3b8; font-family: monospace; margin-bottom: 4px; }
         
-        .card-en {{ font-size: 16px; font-weight: 600; color: #f1f5f9; margin-bottom: 4px; line-height: 1.4; }}
-        .clickable-word {{ cursor: pointer; border-bottom: 1px dotted #38bdf8; transition: color 0.1s; }}
-        .clickable-word:hover {{ color: #38bdf8; background: rgba(56,189,248,0.1); border-radius: 3px; }}
+        .card-en { font-size: 16px; font-weight: 600; color: #f1f5f9; margin-bottom: 4px; line-height: 1.4; }
+        .clickable-word { cursor: pointer; border-bottom: 1px dotted #38bdf8; transition: color 0.1s; }
+        .clickable-word:hover { color: #38bdf8; background: rgba(56,189,248,0.1); border-radius: 3px; }
 
-        .card-zh {{ font-size: 14px; color: #cbd5e1; margin-bottom: 2px; line-height: 1.35; }}
+        .card-zh { font-size: 14px; color: #cbd5e1; margin-bottom: 2px; line-height: 1.35; }
 
-        #modal-overlay {{ display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 9999; justify-content: center; align-items: center; }}
-        .modal-box {{ background: #1e293b; border: 1px solid #334155; width: 90%; max-width: 400px; border-radius: 14px; padding: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); color: #f8fafc; position: relative; }}
-        .modal-title {{ font-size: 20px; font-weight: bold; color: #38bdf8; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; }}
-        .modal-pos {{ font-size: 13px; color: #94a3b8; margin-bottom: 10px; }}
-        .modal-meaning {{ font-size: 16px; font-weight: 500; margin-bottom: 12px; color: #fde047; }}
-        .modal-examples {{ font-size: 13px; color: #cbd5e1; background: #0f172a; padding: 10px; border-radius: 8px; margin-bottom: 16px; line-height: 1.4; }}
-        .modal-btns {{ display: flex; gap: 10px; justify-content: flex-end; }}
-        .btn-action {{ padding: 8px 14px; border-radius: 8px; border: none; font-size: 13px; font-weight: bold; cursor: pointer; }}
-        .btn-save {{ background: #0284c7; color: #fff; }}
-        .btn-save:hover {{ background: #0369a1; }}
-        .btn-close {{ background: #475569; color: #fff; }}
-        .btn-close:hover {{ background: #334155; }}
+        #modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 9999; justify-content: center; align-items: center; }
+        .modal-box { background: #1e293b; border: 1px solid #334155; width: 90%; max-width: 400px; border-radius: 14px; padding: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); color: #f8fafc; position: relative; }
+        .modal-title { font-size: 20px; font-weight: bold; color: #38bdf8; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; }
+        .modal-pos { font-size: 13px; color: #94a3b8; margin-bottom: 10px; }
+        .modal-meaning { font-size: 16px; font-weight: 500; margin-bottom: 12px; color: #fde047; }
+        .modal-examples { font-size: 13px; color: #cbd5e1; background: #0f172a; padding: 10px; border-radius: 8px; margin-bottom: 16px; line-height: 1.4; }
+        .modal-btns { display: flex; gap: 10px; justify-content: flex-end; }
+        .btn-action { padding: 8px 14px; border-radius: 8px; border: none; font-size: 13px; font-weight: bold; cursor: pointer; }
+        .btn-save { background: #0284c7; color: #fff; }
+        .btn-save:hover { background: #0369a1; }
+        .btn-close { background: #475569; color: #fff; }
+        .btn-close:hover { background: #334155; }
     </style>
     </head>
     <body>
@@ -383,57 +384,57 @@ def render_interactive_player(video_id, data, api_key):
     </div>
 
     <script>
-        const subs = {data_json};
-        const apiKey = "{api_key}";
+        const subs = __DATA_JSON__;
+        const apiKey = "__API_KEY__";
         let player;
         let activeIdx = -1;
         let manualSeekLockUntil = 0;
         let currentWordData = null;
 
-        function activateSegment(idx, smoothScroll = true) {{
+        function activateSegment(idx, smoothScroll = true) {
             if (idx < 0 || idx >= subs.length) return;
             activeIdx = idx;
             document.querySelectorAll('.seg-card').forEach(el => el.classList.remove('active'));
             const activeCard = document.getElementById('seg-' + idx);
-            if (activeCard) {{
+            if (activeCard) {
                 activeCard.classList.add('active');
-                if (smoothScroll) {{
-                    activeCard.scrollIntoView({{ behavior: 'smooth', block: 'nearest' }});
-                }}
-            }}
-        }}
+                if (smoothScroll) {
+                    activeCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                }
+            }
+        }
 
         const listEl = document.getElementById('transcript-list');
-        subs.forEach((s, idx) => {{
+        subs.forEach((s, idx) => {
             const card = document.createElement('div');
             card.className = 'seg-card';
             card.id = 'seg-' + idx;
-            card.onclick = (e) => {{
+            card.onclick = (e) => {
                 if (e.target.classList.contains('clickable-word')) return;
                 activateSegment(idx, false);
                 manualSeekLockUntil = Date.now() + 750;
-                if (player && player.seekTo) {{
+                if (player && player.seekTo) {
                     player.seekTo(s.start + 0.05, true);
                     player.playVideo();
-                }}
-            }};
+                }
+            };
 
             const mins = Math.floor(s.start / 60).toString().padStart(2, '0');
             const secs = Math.floor(s.start % 60).toString().padStart(2, '0');
             
-            const words = s.en_text.split(' ').map(w => {{
+            const words = s.en_text.split(' ').map(w => {
                 const clean = w.replace(/[^a-zA-Z]/g, '');
-                if (clean.length > 0) {{
-                    return `<span class="clickable-word" onclick="lookupWord('${{clean}}')">${{w}}</span>`;
-                }}
+                if (clean.length > 0) {
+                    return `<span class="clickable-word" onclick="lookupWord('${clean}')">${w}</span>`;
+                }
                 return w;
-            }}).join(' ');
+            }).join(' ');
 
-            card.innerHTML = `<div class="time-tag">[${{mins}}:${{secs}}]</div><div class="card-en">${{words}}</div><div class="card-zh">${{s.zh_text}}</div>`;
+            card.innerHTML = `<div class="time-tag">[${mins}:${secs}]</div><div class="card-en">${words}</div><div class="card-zh">${s.zh_text}</div>`;
             listEl.appendChild(card);
-        }});
+        });
 
-        async function lookupWord(word) {{
+        async function lookupWord(word) {
             const overlay = document.getElementById('modal-overlay');
             const mWord = document.getElementById('m-word');
             const mLoading = document.getElementById('m-loading');
@@ -451,25 +452,25 @@ def render_interactive_player(video_id, data, api_key):
             saveBtn.innerText = '⭐ 加入收藏';
             saveBtn.disabled = false;
 
-            currentWordData = {{ word: word, pos: '', meaning: '', examples: '' }};
+            currentWordData = { word: word, pos: '', meaning: '', examples: '' };
 
-            try {{
-                const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {{
+            try {
+                const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
                     method: "POST",
-                    headers: {{
+                    headers: {
                         "Authorization": "Bearer " + apiKey,
                         "Content-Type": "application/json"
-                    }},
-                    body: JSON.stringify({{
+                    },
+                    body: JSON.stringify({
                         "model": "openai/gpt-oss-120b",
                         "messages": [
-                            {{"role": "system", "content": "You are a professional English-Chinese dictionary. Return valid JSON only."}},
-                            {{"role": "user", "content": `請查詢英文單字 "${{word}}"，並以台灣繁體中文回傳以下 JSON 格式：{{"pos":"詞性(例如 n. 或 v.)","meaning":"中文含意","examples":"1. 英文例句\\n中文翻譯"}}。不要回傳其他內容。`}}
+                            {"role": "system", "content": "You are a professional English-Chinese dictionary. Return valid JSON only."},
+                            {"role": "user", "content": `請查詢英文單字 "${word}"，並以台灣繁體中文回傳以下 JSON 格式：{"pos":"詞性(例如 n. 或 v.)","meaning":"中文含意","examples":"1. 英文例句\\n中文翻譯"}。不要回傳其他內容。`}
                         ],
-                        "response_format": {{ "type": "json_object" }},
+                        "response_format": { "type": "json_object" },
                         "max_completion_tokens": 500
-                    }})
-                }});
+                    })
+                });
                 const data = await res.json();
                 const content = JSON.parse(data.choices[0].message.content);
                 
@@ -481,16 +482,16 @@ def render_interactive_player(video_id, data, api_key):
                 currentWordData.pos = content.pos || '';
                 currentWordData.meaning = content.meaning || '';
                 currentWordData.examples = content.examples || '';
-            } catch (err) {{
+            } catch (err) {
                 mLoading.innerText = '查詢失敗，請檢查 API Key';
-            }}
-        }}
+            }
+        }
 
-        function closeModal() {{
+        function closeModal() {
             document.getElementById('modal-overlay').style.display = 'none';
-        }}
+        }
 
-        function saveCurrentWord() {{
+        function saveCurrentWord() {
             if (!currentWordData || !currentWordData.word) return;
             
             const saveBtn = document.getElementById('btn-save-vocab');
@@ -498,49 +499,51 @@ def render_interactive_player(video_id, data, api_key):
             saveBtn.disabled = true;
 
             const dataStr = encodeURIComponent(JSON.stringify(currentWordData));
-            fetch('/?save_vocab=' + dataStr).then(() => {{
+            fetch('/?save_vocab=' + dataStr).then(() => {
                 setTimeout(closeModal, 600);
-            }});
-        }}
+            });
+        }
 
         var tag = document.createElement('script');
         tag.src = "https://www.youtube.com/iframe_api";
         var firstScriptTag = document.getElementsByTagName('script')[0];
         firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
 
-        function onYouTubeIframeAPIReady() {{
-            player = new YT.Player('player', {{
-                videoId: '{video_id}',
-                playerVars: {{ 'playsinline': 1, 'rel': 0 }},
-                events: {{ 'onReady': startSync }}
-            }});
-        }}
+        function onYouTubeIframeAPIReady() {
+            player = new YT.Player('player', {
+                videoId: '__VIDEO_ID__',
+                playerVars: { 'playsinline': 1, 'rel': 0 },
+                events: { 'onReady': startSync }
+            });
+        }
 
-        function startSync() {{
-            setInterval(() => {{
+        function startSync() {
+            setInterval(() => {
                 if (!player || !player.getCurrentTime) return;
                 if (Date.now() - manualSeekLockUntil < 0) return;
                 const t = player.getCurrentTime();
                 
                 let idx = -1;
-                for (let i = 0; i < subs.length; i++) {{
+                for (let i = 0; i < subs.length; i++) {
                     const currentStart = subs[i].start;
                     const nextStart = (i + 1 < subs.length) ? subs[i + 1].start : 999999;
-                    if (t >= currentStart && t < nextStart) {{
+                    if (t >= currentStart && t < nextStart) {
                         idx = i;
                         break;
-                    }}
-                }}
+                    }
+                }
 
-                if (idx !== -1 && idx !== activeIdx) {{
+                if (idx !== -1 && idx !== activeIdx) {
                     activateSegment(idx, true);
-                }}
-            }}, 100);
-        }}
+                }
+            }, 100);
+        }
     </script>
     </body>
     </html>
     """
+    
+    html_code = html_template.replace("__DATA_JSON__", data_json).replace("__API_KEY__", api_key).replace("__VIDEO_ID__", video_id)
     components.html(html_code, height=680)
 
 query_params = st.query_params
