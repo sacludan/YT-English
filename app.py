@@ -240,21 +240,29 @@ def call_groq_translate_only(payload, api_key):
     with urllib.request.urlopen(req, timeout=90) as resp:
         response = json.loads(resp.read().decode("utf-8"))
     content = response["choices"][0]["message"]["content"]
+    
+    # 清理可能殘留的 Markdown 標籤以防解析失敗
+    content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip())
     parsed = json.loads(content)
     results = parsed.get("segments", [])
     expected_ids = {int(item["id"]) for item in payload}
     result_map = {}
     for item in results:
-        sid = int(item.get("id"))
-        if sid in expected_ids:
-            result_map[sid] = item.get("zh_text", "").strip()
+        try:
+            sid = int(item.get("id"))
+            zh = str(item.get("zh_text", "")).strip()
+            if sid in expected_ids and zh:
+                result_map[sid] = zh
+        except Exception:
+            continue
     return result_map
 
 def translate_Subtitles(segments, api_key):
     if not segments:
         return []
 
-    batch_size = 30
+    # 縮小單批數量至 18 句，大幅降低長影片觸發 API 流量限制與 JSON 截斷的機率
+    batch_size = 18
     total = len(segments)
     total_batches = (total + batch_size - 1) // batch_size
     final_results = []
@@ -268,21 +276,40 @@ def translate_Subtitles(segments, api_key):
         pending = [{"id": int(s["id"]), "en_text": s["en_text"]} for s in batch]
         trans_map = {}
 
-        for attempt in range(3):
+        # 第一階段：標準批次重試（搭配階梯式等待冷卻）
+        for attempt in range(4):
             if not pending:
                 break
-            status_box.caption(f"⚡ 正在翻譯第 {batch_num}/{total_batches} 批...")
+            status_box.caption(f"⚡ 正在翻譯第 {batch_num}/{total_batches} 批（剩餘 {len(pending)} 句）...")
             try:
                 partial_map = call_groq_translate_only(pending, api_key)
                 trans_map.update(partial_map)
                 pending = [item for item in pending if int(item["id"]) not in trans_map]
                 if not pending:
                     break
-                time.sleep(1)
+                time.sleep(1.5)
+            except urllib.error.HTTPError as e:
+                # 若遇到 429 Rate Limit 流量限制，等待較長時間讓額度冷卻
+                wait_time = 6 if e.code == 429 else 3
+                time.sleep(wait_time + attempt * 2)
             except Exception:
-                if attempt == 2:
-                    break
-                time.sleep(2)
+                time.sleep(2 + attempt * 2)
+
+        # 第二階段：若該批仍有漏網之魚，拆成 5 句一小包進行精準救援補翻
+        if pending:
+            status_box.caption(f"🔧 正在精準補翻第 {batch_num} 批遺漏的句子...")
+            for j in range(0, len(pending), 5):
+                sub_pending = pending[j:j + 5]
+                for sub_attempt in range(3):
+                    try:
+                        partial_map = call_groq_translate_only(sub_pending, api_key)
+                        trans_map.update(partial_map)
+                        sub_pending = [item for item in sub_pending if int(item["id"]) not in trans_map]
+                        if not sub_pending:
+                            break
+                        time.sleep(1.5)
+                    except Exception:
+                        time.sleep(3 + sub_attempt * 2)
 
         for s in batch:
             zh = trans_map.get(int(s["id"]), "（未翻譯）")
@@ -295,10 +322,49 @@ def translate_Subtitles(segments, api_key):
             })
 
         progress_bar.progress(min((i + len(batch)) / total, 1.0), text=f"✅ 已處理 {min(i + len(batch), total)} / {total} 句...")
+        # 批次之間稍微喘息 0.4 秒，保護長影片不撞上每分鐘速率限制
+        if i + batch_size < total:
+            time.sleep(0.4)
 
     status_box.empty()
     progress_bar.empty()
     return final_results
+
+def repair_untranslated_segments(data, api_key):
+    """針對快取中殘留『（未翻譯）』的句子進行自動補翻"""
+    missing = [{"id": int(s["id"]), "en_text": s["en_text"]} for s in data if s.get("zh_text") in ("（未翻譯）", "", None)]
+    if not missing:
+        return data, False
+
+    total_m = len(missing)
+    progress_bar = st.progress(0, text=f"🔧 偵測到 {total_m} 句未翻譯字幕，正在自動補齊...")
+    repaired_map = {}
+    chunk_size = 10
+
+    for i in range(0, total_m, chunk_size):
+        chunk = missing[i:i + chunk_size]
+        for attempt in range(3):
+            if not chunk:
+                break
+            try:
+                part = call_groq_translate_only(chunk, api_key)
+                repaired_map.update(part)
+                chunk = [item for item in chunk if int(item["id"]) not in repaired_map]
+                if not chunk:
+                    break
+                time.sleep(1.5)
+            except Exception:
+                time.sleep(3 + attempt * 2)
+        progress_bar.progress(min((i + chunk_size) / total_m, 1.0), text=f"🔧 已補齊 {min(i + chunk_size, total_m)} / {total_m} 句...")
+
+    progress_bar.empty()
+    updated = False
+    for s in data:
+        sid = int(s["id"])
+        if sid in repaired_map:
+            s["zh_text"] = repaired_map[sid]
+            updated = True
+    return data, updated
 
 def render_interactive_player(video_id, data, api_key):
     data_json = json.dumps(data, ensure_ascii=False)
@@ -308,6 +374,10 @@ def render_interactive_player(video_id, data, api_key):
     <html>
     <head>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <!-- 啟用 iOS 全螢幕 Web App 模式，點擊主畫面捷徑時不再出現 Safari 網址列 -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="雙語單字神器">
     <style>
         html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Microsoft JhengHei', sans-serif; background: #0f172a; color: #f8fafc; touch-action: pan-y; }
         .main-container { display: flex; flex-direction: column; width: 100%; height: 100vh; max-width: 800px; margin: 0 auto; box-sizing: border-box; padding: 6px; gap: 8px; }
@@ -568,7 +638,6 @@ with st.sidebar:
 
     if nav_choice == "📚 我的收藏":
         st.markdown("### 📚 收藏生字本")
-        # 透過前端 JavaScript 監聽 localStorage 變化並自動重新整理渲染，實現「秒速自動出現」！
         components.html("""
         <div style="font-family: -apple-system, sans-serif; color: inherit; font-size: 14px; height: 75vh; overflow-y: auto; padding-right: 4px;">
             <div id="vocab-list">載入中...</div>
@@ -631,13 +700,11 @@ with st.sidebar:
 
             renderVocab();
 
-            // 定期自動同步檢查 localStorage，確保切換過來時立刻顯示最新單字
             window.addEventListener('storage', (e) => {
                 if (e.key === 'yt_saved_vocab') {
                     renderVocab();
                 }
             });
-            // 每次頁面焦點回來時重新整理一次
             window.addEventListener('focus', renderVocab);
             setInterval(renderVocab, 1000);
         </script>
@@ -687,6 +754,11 @@ if run_btn:
                     with open(cache_file, "r", encoding="utf-8") as f:
                         cached_data = json.load(f)
                     if isinstance(cached_data, list) and cached_data:
+                        # 若快取中有未翻譯的句子，自動啟動修補機制
+                        cached_data, was_repaired = repair_untranslated_segments(cached_data, api_key)
+                        if was_repaired:
+                            with open(cache_file, "w", encoding="utf-8") as f:
+                                json.dump(cached_data, f, ensure_ascii=False, indent=2)
                         use_cache = True
                         st.session_state["subs_data"] = cached_data
                         st.session_state["vid"] = vid
@@ -696,8 +768,8 @@ if run_btn:
             if not use_cache:
                 try:
                     with st.spinner("1/2 正在智慧重組字幕並由 AI 產出流暢中文..."):
-                        raw_sgs = fetch_fast_transcript(vid)
-                    final_data = translate_Subtitles(raw_sgs, api_key)
+                        raw_segs = fetch_fast_transcript(vid)
+                    final_data = translate_Subtitles(raw_segs, api_key)
                     if any(item.get("zh_text") != "（未翻譯）" for item in final_data):
                         with open(cache_file, "w", encoding="utf-8") as f:
                             json.dump(final_data, f, ensure_ascii=False, indent=2)
