@@ -309,20 +309,20 @@ def render_interactive_player(video_id, data, api_key):
     <head>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <style>
-        /* 嚴格鎖定整個畫面視窗，禁止頁面本身滾動，徹底解決影片被裁切或頂出的問題 */
-        html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Microsoft JhengHei', sans-serif; background: #0f172a; color: #f8fafc; }
+        /* 強制鎖定視窗，禁止任何頁面彈性回彈與外層滾動 */
+        html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Microsoft JhengHei', sans-serif; background: #0f172a; color: #f8fafc; touch-action: pan-y; }
         
-        .main-container { display: flex; flex-direction: column; height: 100vh; max-width: 800px; margin: 0 auto; box-sizing: border-box; padding: 6px; gap: 8px; }
+        .main-container { display: flex; flex-direction: column; width: 100%; height: 100vh; max-width: 800px; margin: 0 auto; box-sizing: border-box; padding: 6px; gap: 8px; }
         
-        /* 影片區塊固定在頂部，絕對不被壓縮或滾動裁切 */
+        /* 影片區塊完美固定在上方，絕對不會被擠壓或裁切 */
         .video-wrapper { position: relative; width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.3); flex-shrink: 0; }
         #player { width: 100%; height: 100%; }
         
-        /* 字幕清單獨立擁有捲軸，在影片下方自由滾動，完全不影響上方影片 */
-        .transcript-list { display: flex; flex-direction: column; gap: 8px; flex-grow: 1; overflow-y: auto; padding-right: 2px; }
+        /* 字幕清單獨立在下方捲動，且底部保留足夠空間讓最後一張卡片完整顯示 */
+        .transcript-list { display: flex; flex-direction: column; gap: 8px; flex-grow: 1; overflow-y: auto; padding-right: 2px; padding-bottom: 24px; box-sizing: border-box; }
         
         .seg-card { padding: 12px 14px; border-radius: 10px; background: #1e293b; cursor: pointer; border-left: 4px solid #334155; transition: background 0.15s ease; flex-shrink: 0; }
-        .seg-card.active { background: #1e3a8a !important; border-left: 4px solid #38bdf8 !important; box-shadow: 0 0 10px (56,189,248,0.2); }
+        .seg-card.active { background: #1e3a8a !important; border-left: 4px solid #38bdf8 !important; box-shadow: 0 0 10px rgba(56,189,248,0.2); }
         .time-tag { font-size: 11px; color: #94a3b8; font-family: monospace; margin-bottom: 4px; }
         
         .card-en { font-size: 16px; font-weight: 600; color: #f1f5f9; margin-bottom: 4px; line-height: 1.4; }
@@ -559,8 +559,8 @@ def render_interactive_player(video_id, data, api_key):
     """
     
     html_code = html_template.replace("__DATA_JSON__", data_json).replace("__API_KEY__", api_key).replace("__VIDEO_ID__", video_id)
-    # 高度設為滿版視窗高度扣掉邊距，完美適配手機螢幕
-    components.html(html_code, height=840)
+    # 完美將高度鎖定在 750px，配合內部捲軸，絕對不會被往上拉出空白或裁切
+    components.html(html_code, height=750)
 
 KEY_FILE = "saved_api_key.txt"
 saved_key = ""
