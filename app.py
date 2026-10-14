@@ -11,12 +11,6 @@ from youtube_transcript_api import YouTubeTranscriptApi
 
 st.set_page_config(page_title="AI 隨身雙語單字神器", layout="centered", initial_sidebar_state="collapsed")
 
-st.markdown("""
-<style>
-    .block-container { padding-top: 1rem !important; padding-bottom: 1rem !important; padding-left: 0.5rem !important; padding-right: 0.5rem !important; background-color: #0f172a; }
-</style>
-""", unsafe_allow_html=True)
-
 def extract_video_id(url):
     match = re.search(r"(?:v=|\/|youtu\.be\/|shorts\/)([0-9A-Za-z_-]{11})", url)
     return match.group(1) if match else None
