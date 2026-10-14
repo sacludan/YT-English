@@ -314,6 +314,7 @@ def render_interactive_player(video_id, data):
 
         function activateSegment(idx, smoothScroll = true) {{
             if (idx < 0 || idx >= subs.length) return;
+            if (activeIdx === idx) return;
             activeIdx = idx;
             document.querySelectorAll('.seg-card').forEach(el => el.classList.remove('active'));
             const activeCard = document.getElementById('seg-' + idx);
@@ -366,15 +367,29 @@ def render_interactive_player(video_id, data):
                 if (!player || !player.getCurrentTime) return;
                 if (Date.now() < manualSeekLockUntil) return;
                 const t = player.getCurrentTime();
+                
                 let idx = -1;
+                // 1. 精準比對當前秒數落在哪一個句子的範圍內
                 for (let i = 0; i < subs.length; i++) {{
-                    if (t >= subs[i].start) {{
+                    if (t >= subs[i].start && t <= subs[i].end + 0.2) {{
                         idx = i;
-                    }} else {{
                         break;
                     }}
                 }}
-                if (idx !== -1 && idx !== activeIdx) {{
+                // 2. 如果剛好在空檔，尋找最近的下一句作為預判
+                if (idx === -1) {{
+                    for (let i = 0; i < subs.length; i++) {{
+                        if (t < subs[i].start) {{
+                            idx = Math.max(0, i - 1);
+                            break;
+                        }}
+                    }}
+                    if (idx === -1 && subs.length > 0) {{
+                        idx = subs.length - 1;
+                    }}
+                }}
+
+                if (idx !== -1) {{
                     activateSegment(idx, true);
                 }}
             }}, 100);
