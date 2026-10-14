@@ -11,6 +11,12 @@ from youtube_transcript_api import YouTubeTranscriptApi
 
 st.set_page_config(page_title="AI 隨身雙語單字神器", layout="centered", initial_sidebar_state="collapsed")
 
+st.markdown("""
+<style>
+    .block-container { padding-top: 1rem !important; padding-bottom: 1rem !important; padding-left: 0.5rem !important; padding-right: 0.5rem !important; background-color: #0f172a; }
+</style>
+""", unsafe_allow_html=True)
+
 def extract_video_id(url):
     match = re.search(r"(?:v=|\/|youtu\.be\/|shorts\/)([0-9A-Za-z_-]{11})", url)
     return match.group(1) if match else None
@@ -314,7 +320,6 @@ def render_interactive_player(video_id, data):
 
         function activateSegment(idx, smoothScroll = true) {{
             if (idx < 0 || idx >= subs.length) return;
-            if (activeIdx === idx) return;
             activeIdx = idx;
             document.querySelectorAll('.seg-card').forEach(el => el.classList.remove('active'));
             const activeCard = document.getElementById('seg-' + idx);
@@ -367,27 +372,14 @@ def render_interactive_player(video_id, data):
                 if (!player || !player.getCurrentTime) return;
                 if (Date.now() < manualSeekLockUntil) return;
                 const t = player.getCurrentTime();
-                
                 let idx = -1;
-                for (let i = 0; i < subs.length; i++) {{
-                    if (t >= subs[i].start && t <= subs[i].end + 0.2) {{
+                for (let i = subs.length - 1; i >= 0; i--) {{
+                    if (t >= subs[i].start && t <= subs[i].end + 0.15) {{
                         idx = i;
                         break;
                     }}
                 }}
-                if (idx === -1) {{
-                    for (let i = 0; i < subs.length; i++) {{
-                        if (t < subs[i].start) {{
-                            idx = Math.max(0, i - 1);
-                            break;
-                        }}
-                    }}
-                    if (idx === -1 && subs.length > 0) {{
-                        idx = subs.length - 1;
-                    }}
-                }}
-
-                if (idx !== -1) {{
+                if (idx !== -1 && idx !== activeIdx) {{
                     activateSegment(idx, true);
                 }}
             }}, 100);
