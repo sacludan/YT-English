@@ -236,13 +236,8 @@ def render_interactive_player(video_id, data):
         .video-wrapper {{ position: relative; width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }}
         #player {{ width: 100%; height: 100%; }}
         .transcript-list {{ display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; padding-right: 4px; }}
-        
-        /* 統一卡片基礎樣式，移除會衝突的 hover 顏色 */
         .seg-card {{ padding: 12px 14px; border-radius: 10px; background: #1e293b; cursor: pointer; border-left: 4px solid #334155; transition: background 0.15s ease; }}
-        
-        /* 唯一的亮藍色 active 狀態：不管是點擊還是自動跟隨，全部共用這一個樣式 */
         .seg-card.active {{ background: #1e3a8a !important; border-left: 4px solid #38bdf8 !important; box-shadow: 0 0 10px rgba(56,189,248,0.2); }}
-        
         .time-tag {{ font-size: 11px; color: #94a3b8; font-family: monospace; margin-bottom: 4px; }}
         .card-en {{ font-size: 16px; font-weight: 600; color: #f1f5f9; margin-bottom: 4px; line-height: 1.4; }}
         .card-zh {{ font-size: 14px; color: #cbd5e1; margin-bottom: 6px; line-height: 1.35; }}
@@ -262,14 +257,10 @@ def render_interactive_player(video_id, data):
         let activeIdx = -1;
         let manualSeekLockUntil = 0;
 
-        // 統一的啟動/高亮函式：點擊與自動同步共用此邏輯
         function activateSegment(idx, smoothScroll = true) {{
             if (idx < 0 || idx >= subs.length) return;
             activeIdx = idx;
-            
-            // 強制先清除畫面中所有卡片的 active 狀態，絕對不允許重複亮起
             document.querySelectorAll('.seg-card').forEach(el => el.classList.remove('active'));
-            
             const activeCard = document.getElementById('seg-' + idx);
             if (activeCard) {{
                 activeCard.classList.add('active');
@@ -284,8 +275,6 @@ def render_interactive_player(video_id, data):
             const card = document.createElement('div');
             card.className = 'seg-card';
             card.id = 'seg-' + idx;
-            
-            // 點擊事件：直接呼叫統一的 activateSegment 並跳轉影片
             card.onclick = () => {{
                 activateSegment(idx, false);
                 manualSeekLockUntil = Date.now() + 750;
@@ -294,7 +283,6 @@ def render_interactive_player(video_id, data):
                     player.playVideo();
                 }}
             }};
-
             const mins = Math.floor(s.start / 60).toString().padStart(2, '0');
             const secs = Math.floor(s.start % 60).toString().padStart(2, '0');
             let vHtml = '';
@@ -303,7 +291,7 @@ def render_interactive_player(video_id, data):
             }}
             card.innerHTML = `<div class="time-tag">[${{mins}}:${{secs}}]</div><div class="card-en">${{s.en_text}}</div><div class="card-zh">${{s.zh_text}}</div>${{vHtml}}`;
             listEl.appendChild(card);
-        }));
+        }});
 
         var tag = document.createElement('script');
         tag.src = "https://www.youtube.com/iframe_api";
@@ -324,7 +312,6 @@ def render_interactive_player(video_id, data):
                 if (Date.now() < manualSeekLockUntil) return;
                 const t = player.getCurrentTime();
                 
-                // 自動同步計時器：精準比對區間，並透過統一的 activateSegment 處理
                 let idx = -1;
                 for (let i = 0; i < subs.length; i++) {{
                     const currentStart = subs[i].start;
