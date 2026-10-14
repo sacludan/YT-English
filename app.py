@@ -104,7 +104,6 @@ def fetch_fast_transcript(video_id):
         if cleaned_blocks[i]["end"] > cleaned_blocks[i + 1]["start"]:
             cleaned_blocks[i]["end"] = cleaned_blocks[i + 1]["start"]
 
-    # 將碎字幕拆解成單字與精確時間軸，再進行智慧斷句重組
     words_with_time = []
     for b in cleaned_blocks:
         words = b["text"].split()
@@ -413,20 +412,11 @@ def render_interactive_player(video_id, data):
                 
                 let idx = -1;
                 for (let i = 0; i < subs.length; i++) {{
-                    if (t >= subs[i].start && t <= subs[i].end + 0.2) {{
+                    const currentStart = subs[i].start;
+                    const nextStart = (i + 1 < subs.length) ? subs[i + 1].start : 999999;
+                    if (t >= currentStart && t < nextStart) {{
                         idx = i;
                         break;
-                    }}
-                }}
-                if (idx === -1) {{
-                    for (let i = 0; i < subs.length; i++) {{
-                        if (t < subs[i].start) {{
-                            idx = Math.max(0, i - 1);
-                            break;
-                        }}
-                    }}
-                    if (idx === -1 && subs.length > 0) {{
-                        idx = subs.length - 1;
                     }}
                 }}
 
@@ -447,20 +437,23 @@ if os.path.exists(KEY_FILE):
     with open(KEY_FILE, "r", encoding="utf-8") as f:
         saved_key = f.read().strip()
 
-st.subheader("🎬 隨身 YouTube 雙語單字神器")
-
-with st.expander("⚙️ 設定 Groq API Key", expanded=(not saved_key)):
-    api_key = st.text_input("請輸入 Groq API Key (gsk_...)", value=saved_key, type="password")
+# 將 API Key 設定收納在側邊欄（平常完全隱藏，點擊右上角選單或滑開側邊欄才能看到）
+with st.sidebar:
+    st.markdown("### ⚙️ 系統設定")
+    api_key = st.text_input("Groq API Key (gsk_...)", value=saved_key, type="password")
     if api_key and api_key.strip() != saved_key:
         with open(KEY_FILE, "w", encoding="utf-8") as f:
             f.write(api_key.strip())
-        st.success("✅ 已儲存 Groq API Key！")
+        st.success("✅ 已儲存 API Key！")
         
-    if st.button("🗑️ 清除舊快取 (更新斷字邏輯必點)"):
+    if st.button("🗑️ 清除快取"):
         for f in glob.glob("cache_*.json"):
             os.remove(f)
         st.session_state.pop("subs_data", None)
         st.success("✅ 已清除舊快取！")
+
+# 主畫面保持極簡：只有標題與乾淨的網址輸入、生成按鈕
+st.subheader("🎬 隨身 YouTube 雙語單字神器")
 
 col1, col2 = st.columns([3, 1])
 with col1:
@@ -470,7 +463,7 @@ with col2:
 
 if run_btn:
     if not api_key or not api_key.strip().startswith("gsk_"):
-        st.error("❌ 請輸入正確的 Groq API Key！")
+        st.error("❌ 請先從側邊欄（或右上角選單）輸入正確的 Groq API Key！")
     elif not url:
         st.error("❌ 請輸入 YouTube 網址！")
     else:
@@ -493,7 +486,7 @@ if run_btn:
             
             if not use_cache:
                 try:
-                    with st.spinner("1/2 正在透過智慧斷句重組字幕並由 AI 產出高階單字卡..."):
+                    with st.spinner("1/2 正在智慧重組字幕並由 AI 產出高階單字卡..."):
                         raw_segs = fetch_fast_transcript(vid)
                     final_data = translate_Subtitles(raw_segs, api_key)
                     if any(item.get("zh_text") != "（未翻譯）" for item in final_data):
