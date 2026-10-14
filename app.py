@@ -480,17 +480,29 @@ def render_interactive_player(video_id, data, api_key):
             document.getElementById('modal-overlay').style.display = 'none';
         }
 
-        function saveCurrentWord() {
+        async function saveCurrentWord() {
             if (!currentWordData || !currentWordData.word) return;
             
             const saveBtn = document.getElementById('btn-save-vocab');
-            saveBtn.innerText = '✅ 已收藏！';
+            saveBtn.innerText = '⏳ 儲存中...';
             saveBtn.disabled = true;
 
-            const dataStr = encodeURIComponent(JSON.stringify(currentWordData));
-            fetch('/?save_vocab=' + dataStr).then(() => {
-                setTimeout(closeModal, 600);
-            });
+            try {
+                // 背景非同步呼叫存檔，完全不重整頁面！
+                const res = await fetch('/?save_vocab_bg=' + encodeURIComponent(JSON.stringify(currentWordData)));
+                if (res.ok) {
+                    saveBtn.innerText = '✅ 已成功加入收藏！';
+                    setTimeout(() => {
+                        closeModal();
+                    }, 800);
+                } else {
+                    saveBtn.innerText = '❌ 儲存失敗';
+                    saveBtn.disabled = false;
+                }
+            } catch (e) {
+                saveBtn.innerText = '❌ 網路錯誤';
+                saveBtn.disabled = false;
+            }
         }
 
         var tag = document.createElement('script');
@@ -535,15 +547,17 @@ def render_interactive_player(video_id, data, api_key):
     html_code = html_template.replace("__DATA_JSON__", data_json).replace("__API_KEY__", api_key).replace("__VIDEO_ID__", video_id)
     components.html(html_code, height=680)
 
+# 背景默默接收存檔請求，完全不跳頁
 query_params = st.query_params
-if "save_vocab" in query_params:
+if "save_vocab_bg" in query_params:
     try:
-        raw_json = query_params["save_vocab"]
+        raw_json = query_params["save_vocab_bg"]
         word_info = json.loads(urllib.parse.unquote(raw_json))
         saved_list = load_saved_vocab()
         if not any(item["word"].lower() == word_info["word"].lower() for item in saved_list):
             saved_list.append(word_info)
             save_vocab_list(saved_list)
+        st.query_params.clear()
     except Exception:
         pass
 
@@ -553,7 +567,6 @@ if os.path.exists(KEY_FILE):
     with open(KEY_FILE, "r", encoding="utf-8") as f:
         saved_key = f.read().strip()
 
-# 左上角側邊欄選單設計
 with st.sidebar:
     st.markdown("### 🧭 功能選單")
     nav_choice = st.radio("選擇頁面", ["🏠 首頁", "📚 我的收藏", "⚙️ API 設定"], label_visibility="collapsed")
@@ -565,6 +578,7 @@ with st.sidebar:
 
     elif nav_choice == "📚 我的收藏":
         st.markdown("### 📚 收藏生字本")
+        # 讓收藏頁面隨時點擊時能重新讀取最新檔案
         saved_vocab = load_saved_vocab()
         if not saved_vocab:
             st.info("目前還沒有收藏任何單字。")
@@ -594,14 +608,11 @@ with st.sidebar:
             st.session_state.pop("subs_data", None)
             st.success("✅ 已清除舊快取！")
 
-# 確保全域可以讀取到 API Key
 if not os.path.exists(KEY_FILE) or not saved_key:
-    # 預設嘗試從 Session 或檔案抓取
     api_key = saved_key
 else:
     api_key = saved_key
 
-# 主畫面
 st.subheader("🎬 隨身 YouTube 雙語單字神器")
 
 col1, col2 = st.columns([3, 1])
