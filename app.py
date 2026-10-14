@@ -7,108 +7,108 @@ import urllib.request
 import urllib.error
 import streamlit as st
 import streamlit.components.v1 as components
+from youtube_transcript_api import YouTubeTranscriptApi
 import yt_dlp
 
-st.set_page_config(page_title="AI 隨身雙語單字神器 (Cookie 破解版)", layout="centered", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="AI 隨身雙語單字神器", layout="centered", initial_sidebar_state="collapsed")
 
 def extract_video_id(url):
     match = re.search(r"(?:v=|\/|youtu\.be\/|shorts\/)([0-9A-Za-z_-]{11})", url)
     return match.group(1) if match else None
 
 def fetch_fast_transcript(video_id):
-    cookie_file = "cookies.txt"
-    ydl_opts = {
-        'skip_download': True,
-        'writesubtitles': True,
-        'writeautomaticsub': True,
-        'subtitleslangs': ['en', 'en-US', 'en-GB'],
-    }
-    if os.path.exists(cookie_file):
-        ydl_opts['cookiefile'] = cookie_file
+    raw_data = None
+    errors = []
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
-        
-        subs = info.get('subtitles') or info.get('automatic_captions')
-        if not subs:
-            raise RuntimeError("無法取得此影片的英文字幕，請確認影片是否有開啟字幕。")
-        
-        en_subs = None
-        for lang in ['en', 'en-US', 'en-GB']:
-            if lang in subs:
-                en_subs = subs[lang]
-                break
-        if not en_subs and subs:
-            en_subs = list(subs.values())[0]
-            
-        sub_url = None
-        for sub in en_subs:
-            if sub.get('ext') == 'json3':
-                sub_url = sub.get('url')
-                break
-        if not sub_url:
-            for sub in en_subs:
-                if sub.get('ext') in ['vtt', 'srv1', 'srv2', 'srv3']:
-                    sub_url = sub.get('url')
-                    break
-        if not sub_url and en_subs:
-            sub_url = en_subs[0].get('url')
-            
-        if not sub_url:
-            raise RuntimeError("無法解析字幕下載網址。")
-            
-        req = urllib.request.Request(sub_url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req) as resp:
-            sub_data = resp.read().decode('utf-8')
-            
-        cleaned_blocks = []
-        try:
-            json_content = json.loads(sub_data)
-            if 'events' in json_content:
-                for ev in json_content['events']:
-                    if 'segs' in ev:
-                        text = "".join([s.get('utf8', '') for s in ev['segs']]).strip()
-                        start = float(ev.get('tStartMs', 0)) / 1000.0
-                        duration = float(ev.get('dDurationMs', 1000)) / 1000.0
-                        if text and text != '\n':
-                            cleaned_blocks.append({"text": text, "start": start, "end": start + duration})
-        except Exception:
-            lines = sub_data.split('\n')
-            current_start = 0.0
-            current_end = 1.0
-            current_text = []
-            
-            for line in lines:
-                line = line.strip()
-                if '-->' in line:
-                    parts = line.split('-->')
-                    def parse_time(t_str):
-                        t_str = t_str.strip().split(' ')[0]
-                        parts = t_str.replace('.', ':').split(':')
-                        if len(parts) == 4:
-                            return int(parts[0])*3600 + int(parts[1])*60 + int(parts[2]) + int(parts[3])/1000
-                        elif len(parts) == 3:
-                            return int(parts[0])*60 + int(parts[1]) + int(parts[2])/1000
-                        return 0.0
+    # 通道 1：優先嘗試用 yt-dlp 搭配 cookies.txt 抓取
+    try:
+        cookie_file = "cookies.txt"
+        ydl_opts = {
+            'skip_download': True,
+            'writesubtitles': True,
+            'writeautomaticsub': True,
+            'subtitleslangs': ['en', 'en-US', 'en-GB'],
+        }
+        if os.path.exists(cookie_file):
+            ydl_opts['cookiefile'] = cookie_file
+
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
+            subs = info.get('subtitles') or info.get('automatic_captions')
+            if subs:
+                en_subs = None
+                for lang in ['en', 'en-US', 'en-GB']:
+                    if lang in subs:
+                        en_subs = subs[lang]
+                        break
+                if not en_subs and subs:
+                    en_subs = list(subs.values())[0]
+                
+                sub_url = None
+                for sub in en_subs:
+                    if sub.get('ext') == 'json3':
+                        sub_url = sub.get('url')
+                        break
+                if not sub_url:
+                    for sub in en_subs:
+                        if sub.get('ext') in ['vtt', 'srv1', 'srv2', 'srv3']:
+                            sub_url = sub.get('url')
+                            break
+                if not sub_url and en_subs:
+                    sub_url = en_subs[0].get('url')
+                
+                if sub_url:
+                    req = urllib.request.Request(sub_url, headers={'User-Agent': 'Mozilla/5.0'})
+                    with urllib.request.urlopen(req) as resp:
+                        sub_data = resp.read().decode('utf-8')
+                        
                     try:
-                        current_start = parse_time(parts[0])
-                        current_end = parse_time(parts[1])
-                    except:
+                        json_content = json.loads(sub_data)
+                        if 'events' in json_content:
+                            raw_blocks = []
+                            for ev in json_content['events']:
+                                if 'segs' in ev:
+                                    text = "".join([s.get('utf8', '') for s in ev['segs']]).strip()
+                                    start = float(ev.get('tStartMs', 0)) / 1000.0
+                                    duration = float(ev.get('dDurationMs', 1000)) / 1000.0
+                                    if text and text != '\n':
+                                        raw_blocks.append({"text": text, "start": start, "end": start + duration})
+                            if raw_blocks:
+                                raw_data = raw_blocks
+                    except Exception:
                         pass
-                elif line and not line.isdigit() and 'WEBVTT' not in line and 'Kind:' not in line and 'Language:' not in line:
-                    current_text.append(line)
-                elif not line and current_text:
-                    text = " ".join(current_text).strip()
-                    if text:
-                        cleaned_blocks.append({"text": text, "start": current_start, "end": current_end})
-                    current_text = []
-            if current_text:
-                text = " ".join(current_text).strip()
-                if text:
-                    cleaned_blocks.append({"text": text, "start": current_start, "end": current_end})
+    except Exception as e:
+        errors.append(f"yt-dlp: {str(e)}")
 
-    if not cleaned_blocks:
-        raise RuntimeError("解析字幕內容失敗。")
+    # 通道 2：如果 yt-dlp 失敗，自動切換回原本最穩定的 youtube-transcript-api
+    if raw_data is None:
+        try:
+            api = YouTubeTranscriptApi()
+            transcript_list = api.list(video_id)
+            try:
+                transcript = transcript_list.find_transcript(["en", "en-US", "en-GB"])
+            except Exception:
+                transcript = next(iter(transcript_list))
+            fetched = transcript.fetch()
+            raw_data = list(fetched)
+        except Exception as e:
+            errors.append(f"transcript-api: {str(e)}")
+
+    if raw_data is None:
+        detail = "；".join(errors)
+        raise RuntimeError(f"無法取得字幕。請確認影片是否有英文字幕。(詳細錯誤: {detail})")
+
+    cleaned_blocks = []
+    for item in raw_data:
+        text = str(item["text"] if isinstance(item, dict) else item.text).replace("\n", " ").strip()
+        start = float(item["start"] if isinstance(item, dict) else item.start)
+        duration_value = item.get("duration") if isinstance(item, dict) else getattr(item, "duration", None)
+        if duration_value is None:
+            end_value = item.get("end") if isinstance(item, dict) else getattr(item, "end", None)
+            duration_value = max(0.05, float(end_value) - start) if end_value is not None else 1.0
+        duration = float(duration_value)
+        if text:
+            cleaned_blocks.append({"text": text, "start": start, "end": start + duration})
 
     for i in range(len(cleaned_blocks) - 1):
         if cleaned_blocks[i]["end"] > cleaned_blocks[i + 1]["start"]:
@@ -422,12 +422,22 @@ def render_interactive_player(video_id, data):
                 if (Date.now() < manualSeekLockUntil) return;
                 const t = player.getCurrentTime();
                 
-                let idx = 0;
+                let idx = -1;
                 for (let i = 0; i < subs.length; i++) {{
-                    if (t >= subs[i].start) {{
+                    if (t >= subs[i].start && t <= subs[i].end + 0.2) {{
                         idx = i;
-                    }} else {{
                         break;
+                    }}
+                }}
+                if (idx === -1) {{
+                    for (let i = 0; i < subs.length; i++) {{
+                        if (t < subs[i].start) {{
+                            idx = Math.max(0, i - 1);
+                            break;
+                        }}
+                    }}
+                    if (idx === -1 && subs.length > 0) {{
+                        idx = subs.length - 1;
                     }}
                 }}
 
@@ -448,7 +458,7 @@ if os.path.exists(KEY_FILE):
     with open(KEY_FILE, "r", encoding="utf-8") as f:
         saved_key = f.read().strip()
 
-st.subheader("🎬 隨身 YouTube 雙語單字神器 (Cookie 破解版)")
+st.subheader("🎬 隨身 YouTube 雙語單字神器")
 
 with st.expander("⚙️ 設定 Groq API Key", expanded=(not saved_key)):
     api_key = st.text_input("請輸入 Groq API Key (gsk_...)", value=saved_key, type="password")
@@ -494,7 +504,7 @@ if run_btn:
             
             if not use_cache:
                 try:
-                    with st.spinner("1/2 正在透過 yt-dlp 與 Cookie 驗證擷取英文字幕..."):
+                    with st.spinner("1/2 正在擷取英文字幕並由 AI 產出高階單字卡..."):
                         raw_segs = fetch_fast_transcript(vid)
                     final_data = translate_Subtitles(raw_segs, api_key)
                     if any(item.get("zh_text") != "（未翻譯）" for item in final_data):
