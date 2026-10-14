@@ -10,17 +10,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 from youtube_transcript_api import YouTubeTranscriptApi
 
-st.set_page_config(page_title="AI 隨身雙語單字神器", page_icon="🚀", layout="centered", initial_sidebar_state="collapsed")
-
-# 絕對隱藏右上角雜訊、Fork、GitHub 與右下角吉祥物，保留左上角側邊欄
-hide_extra_style = """
-<style>
-    .stAppDeployButton {display: none !important;}
-    header [data-testid="stToolbar"] {display: none !important;}
-    footer {display: none !important;}
-</style>
-"""
-st.markdown(hide_extra_style, unsafe_allow_html=True)
+st.set_page_config(page_title="AI 隨身雙語單字神器", page_icon="🚀", layout="centered", initial_sidebar_state="expanded")
 
 VOCAB_FILE = "saved_vocabulary.json"
 
@@ -233,7 +223,7 @@ def fetch_fast_transcript(video_id):
 def call_groq_translate_only(payload, api_key):
     url = "https://api.groq.com/openai/v1/chat/completions"
     prompt = f"""你是一位專業的台灣進階英文教學編輯。
-請將以下英文字幕翻譯成自然、順暢、道地的台灣繁體中文。絕對不要額外挑選單字或回傳 vocab_list。
+請將以下英文字幕翻譯成自然、順暢、道地的台灣繁體中文。絕對不要額外挑選單字。
 
 規則：
 1. 每個輸入 id 都要有且只有一筆翻譯，不可漏掉或自行新增 id。
@@ -328,7 +318,6 @@ def translate_Subtitles(segments, api_key):
 def render_interactive_player(video_id, data, api_key):
     data_json = json.dumps(data, ensure_ascii=False)
     
-    # 改用標準字串賦值並透過 .replace 塞入變數，徹底避開 Python f-string 對大括號的語法審查
     html_template = """
     <!DOCTYPE html>
     <html>
@@ -564,37 +553,55 @@ if os.path.exists(KEY_FILE):
     with open(KEY_FILE, "r", encoding="utf-8") as f:
         saved_key = f.read().strip()
 
+# 左上角側邊欄選單設計
 with st.sidebar:
-    st.markdown("### ⚙️ 系統設定")
-    api_key = st.text_input("Groq API Key (gsk_...)", value=saved_key, type="password")
-    if api_key and api_key.strip() != saved_key:
-        with open(KEY_FILE, "w", encoding="utf-8") as f:
-            f.write(api_key.strip())
-        st.success("✅ 已儲存 API Key！")
-        
-    if st.button("🗑️ 清除快取"):
-        for f in glob.glob("cache_*.json"):
-            os.remove(f)
-        st.session_state.pop("subs_data", None)
-        st.success("✅ 已清除舊快取！")
+    st.markdown("### 🧭 功能選單")
+    nav_choice = st.radio("選擇頁面", ["🏠 首頁", "📚 我的收藏", "⚙️ API 設定"], label_visibility="collapsed")
 
     st.markdown("---")
-    st.markdown("### 📚 我的生字收藏本")
-    saved_vocab = load_saved_vocab()
-    if not saved_vocab:
-        st.info("目前還沒有收藏任何單字。在右側影片字幕中點擊單字即可加入！")
-    else:
-        st.caption(f"共收藏 {len(saved_vocab)} 個單字")
-        for idx, item in enumerate(saved_vocab):
-            with st.expander(f"⭐ {item.get('word')} ({item.get('pos', '')})"):
-                st.write(f"**意思：** {item.get('meaning')}")
-                if item.get('examples'):
-                    st.code(item.get('examples'), language=None)
-                if st.button("🗑️ 刪除", key=f"del_{idx}"):
-                    saved_vocab.pop(idx)
-                    save_vocab_list(saved_vocab)
-                    st.rerun()
 
+    if nav_choice == "🏠 首頁":
+        st.info("💡 **使用說明**\n1. 請先至 **⚙️ API 設定** 輸入 Groq API Key。\n2. 於右側貼上 YouTube 網址生成雙語字幕。\n3. 點擊字幕中的任何單字即可查義與加入收藏！")
+
+    elif nav_choice == "📚 我的收藏":
+        st.markdown("### 📚 收藏生字本")
+        saved_vocab = load_saved_vocab()
+        if not saved_vocab:
+            st.info("目前還沒有收藏任何單字。")
+        else:
+            st.caption(f"共收藏 {len(saved_vocab)} 個單字")
+            for idx, item in enumerate(saved_vocab):
+                with st.expander(f"⭐ {item.get('word')} ({item.get('pos', '')})"):
+                    st.write(f"**意思：** {item.get('meaning')}")
+                    if item.get('examples'):
+                        st.code(item.get('examples'), language=None)
+                    if st.button("🗑️ 刪除", key=f"del_{idx}"):
+                        saved_vocab.pop(idx)
+                        save_vocab_list(saved_vocab)
+                        st.rerun()
+
+    elif nav_choice == "⚙️ API 設定":
+        st.markdown("### ⚙️ 系統與 API")
+        api_key = st.text_input("Groq API Key (gsk_...)", value=saved_key, type="password")
+        if api_key and api_key.strip() != saved_key:
+            with open(KEY_FILE, "w", encoding="utf-8") as f:
+                f.write(api_key.strip())
+            st.success("✅ 已儲存 API Key！")
+            
+        if st.button("🗑️ 清除舊快取"):
+            for f in glob.glob("cache_*.json"):
+                os.remove(f)
+            st.session_state.pop("subs_data", None)
+            st.success("✅ 已清除舊快取！")
+
+# 確保全域可以讀取到 API Key
+if not os.path.exists(KEY_FILE) or not saved_key:
+    # 預設嘗試從 Session 或檔案抓取
+    api_key = saved_key
+else:
+    api_key = saved_key
+
+# 主畫面
 st.subheader("🎬 隨身 YouTube 雙語單字神器")
 
 col1, col2 = st.columns([3, 1])
@@ -605,7 +612,7 @@ with col2:
 
 if run_btn:
     if not api_key or not api_key.strip().startswith("gsk_"):
-        st.error("❌ 請先從左上角側邊欄輸入正確的 Groq API Key！")
+        st.error("❌ 請先從左上角側邊欄切換到 **⚙️ API 設定** 輸入正確的 Groq API Key！")
     elif not url:
         st.error("❌ 請輸入 YouTube 網址！")
     else:
