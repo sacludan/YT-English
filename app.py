@@ -330,8 +330,10 @@ def render_interactive_player(video_id, data, api_key):
         .modal-pos { font-size: 13px; color: #94a3b8; margin-bottom: 10px; }
         .modal-meaning { font-size: 16px; font-weight: 500; margin-bottom: 12px; color: #fde047; }
         .modal-examples { font-size: 13px; color: #cbd5e1; background: #0f172a; padding: 10px; border-radius: 8px; margin-bottom: 16px; line-height: 1.4; }
-        .modal-btns { display: flex; gap: 10px; justify-content: flex-end; }
+        .modal-btns { display: flex; gap: 10px; justify-content: space-between; align-items: center; }
         .btn-action { padding: 8px 14px; border-radius: 8px; border: none; font-size: 13px; font-weight: bold; cursor: pointer; }
+        .btn-audio { background: #334155; color: #38bdf8; display: flex; align-items: center; gap: 4px; }
+        .btn-audio:hover { background: #475569; }
         .btn-save { background: #0284c7; color: #fff; }
         .btn-save:hover { background: #0369a1; }
         .btn-close { background: #475569; color: #fff; }
@@ -346,7 +348,11 @@ def render_interactive_player(video_id, data, api_key):
 
     <div id="modal-overlay">
         <div class="modal-box">
-            <div class="modal-title"><span id="m-word">Loading...</span> <span id="m-loading" style="font-size: 12px; color: #94a3b8; font-weight: normal;">查詢中...</span></div>
+            <div class="modal-title">
+                <span id="m-word">Loading...</span> 
+                <button class="btn-action btn-audio" onclick="speakCurrentWord()">🔊 發音</button>
+            </div>
+            <div id="m-loading" style="font-size: 12px; color: #94a3b8; margin-bottom: 6px;">查詢中...</div>
             <div class="modal-pos" id="m-pos"></div>
             <div class="modal-meaning" id="m-meaning"></div>
             <div class="modal-examples" id="m-examples"></div>
@@ -364,6 +370,20 @@ def render_interactive_player(video_id, data, api_key):
         let activeIdx = -1;
         let manualSeekLockUntil = 0;
         let currentWordData = null;
+
+        function speakWord(wordText) {
+            if (!wordText) return;
+            const utterance = new SpeechSynthesisUtterance(wordText);
+            utterance.lang = 'en-US';
+            utterance.rate = 0.9; // 稍微放慢一點點，適合學習
+            window.speechSynthesis.speak(utterance);
+        }
+
+        function speakCurrentWord() {
+            if (currentWordData && currentWordData.word) {
+                speakWord(currentWordData.word);
+            }
+        }
 
         function activateSegment(idx, smoothScroll = true) {
             if (idx < 0 || idx >= subs.length) return;
@@ -427,6 +447,7 @@ def render_interactive_player(video_id, data, api_key):
             saveBtn.disabled = false;
 
             currentWordData = { word: word, pos: '', meaning: '', examples: '' };
+            speakWord(word); // 彈出視窗時自動唸一次
 
             try {
                 const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -472,14 +493,12 @@ def render_interactive_player(video_id, data, api_key):
             saveBtn.innerText = '✅ 已成功加入收藏！';
             saveBtn.disabled = true;
 
-            // 直接存入瀏覽器 localStorage，完全不透過後端、不重整網頁！
             let savedList = [];
             try {
                 const existing = localStorage.getItem('yt_saved_vocab');
                 if (existing) savedList = JSON.parse(existing);
             } catch(e) {}
 
-            // 檢查是否重複
             const exists = savedList.some(item => item.word.toLowerCase() === currentWordData.word.toLowerCase());
             if (!exists) {
                 savedList.push(currentWordData);
@@ -546,16 +565,25 @@ with st.sidebar:
     st.markdown("---")
 
     if nav_choice == "🏠 首頁":
-        st.info("💡 **使用說明**\n1. 請先至 **⚙️ API 設定** 輸入 Groq API Key。\n2. 於右側貼上 YouTube 網址生成雙語字幕。\n3. 點擊字幕中的任何單字即可查義與加入收藏！")
+        st.info("💡 **使用說明**\n1. 請先至 **⚙️ API 設定** 輸入 Groq API Key。\n2. 於右側貼上 YouTube 網址生成雙語字幕。\n3. 點擊字幕中的任何單字即可查義、聽發音與加入收藏！")
 
     elif nav_choice == "📚 我的收藏":
         st.markdown("### 📚 收藏生字本")
-        # 透過前端 JavaScript 讀取瀏覽器 localStorage 的生字並顯示在側邊欄
+        # 收藏頁面內建發音按鈕與刪除功能
         components.html("""
         <div style="font-family: -apple-system, sans-serif; color: inherit; font-size: 14px;">
             <div id="vocab-list">載入中...</div>
         </div>
         <script>
+            function speakWord(wordText) {
+                if (!wordText) return;
+                const utterance = new SpeechSynthesisUtterance(wordText);
+                utterance.lang = 'en-US';
+                utterance.rate = 0.9;
+                window.speechSynthesis.speak(utterance);
+            }
+            window.speakWord = speakWord;
+
             function renderVocab() {
                 const container = document.getElementById('vocab-list');
                 let savedList = [];
@@ -574,8 +602,11 @@ with st.sidebar:
                     html += `
                         <div style="background: #1e293b; color: #f8fafc; padding: 10px; border-radius: 8px; margin-bottom: 8px; border-left: 3px solid #38bdf8;">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-                                <strong style="color: #38bdf8; font-size: 15px;">⭐ ${item.word} <span style="font-size: 12px; color: #94a3b8;">(${item.pos})</span></strong>
-                                <button onclick="deleteVocab(${idx})" style="background: #ef4444; color: white; border: none; padding: 3px 8px; border-radius: 4px; font-size: 11px; cursor: pointer;">刪除</button>
+                                <strong style="color: #38bdf8; font-size: 15px; cursor: pointer;" onclick="speakWord('${item.word}')">⭐ ${item.word} <span style="font-size: 12px; color: #94a3b8;">(${item.pos})</span></strong>
+                                <div>
+                                    <button onclick="speakWord('${item.word}')" style="background: #334155; color: #38bdf8; border: none; padding: 3px 8px; border-radius: 4px; font-size: 11px; cursor: pointer; margin-right: 4px;">🔊 發音</button>
+                                    <button onclick="deleteVocab(${idx})" style="background: #ef4444; color: white; border: none; padding: 3px 8px; border-radius: 4px; font-size: 11px; cursor: pointer;">刪除</button>
+                                </div>
                             </div>
                             <div style="font-size: 13px; margin-bottom: 4px; color: #fde047;">${item.meaning}</div>
                             <div style="font-size: 11px; color: #cbd5e1; background: #0f172a; padding: 6px; border-radius: 4px; white-space: pre-line;">${item.examples}</div>
