@@ -373,10 +373,13 @@ def render_interactive_player(video_id, data, api_key):
 
         function speakWord(wordText) {
             if (!wordText) return;
-            const utterance = new SpeechSynthesisUtterance(wordText);
-            utterance.lang = 'en-US';
-            utterance.rate = 0.9; // 稍微放慢一點點，適合學習
-            window.speechSynthesis.speak(utterance);
+            if ('speechSynthesis' in window) {
+                window.speechSynthesis.cancel(); // 強制取消上一個未完成的語音，防止佇列卡死
+                const utterance = new SpeechSynthesisUtterance(wordText);
+                utterance.lang = 'en-US';
+                utterance.rate = 0.9;
+                window.speechSynthesis.speak(utterance);
+            }
         }
 
         function speakCurrentWord() {
@@ -447,7 +450,7 @@ def render_interactive_player(video_id, data, api_key):
             saveBtn.disabled = false;
 
             currentWordData = { word: word, pos: '', meaning: '', examples: '' };
-            speakWord(word); // 彈出視窗時自動唸一次
+            // 拿掉自動朗讀，改為等待使用者手動按喇叭按鈕
 
             try {
                 const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -565,22 +568,25 @@ with st.sidebar:
     st.markdown("---")
 
     if nav_choice == "🏠 首頁":
-        st.info("💡 **使用說明**\n1. 請先至 **⚙️ API 設定** 輸入 Groq API Key。\n2. 於右側貼上 YouTube 網址生成雙語字幕。\n3. 點擊字幕中的任何單字即可查義、聽發音與加入收藏！")
+        st.info("💡 **使用說明**\n1. 請先至 **⚙️ API 設定** 輸入 Groq API Key。\n2. 於右側貼上 YouTube 網址生成雙語字幕。\n3. 點擊字幕中的任何單字即可查義、點擊喇叭聽發音與加入收藏！")
 
     elif nav_choice == "📚 我的收藏":
         st.markdown("### 📚 收藏生字本")
-        # 收藏頁面內建發音按鈕與刪除功能
+        # 移除固定高度限制，改為高度 75vh 並支援獨立卷軸滑動
         components.html("""
-        <div style="font-family: -apple-system, sans-serif; color: inherit; font-size: 14px;">
+        <div style="font-family: -apple-system, sans-serif; color: inherit; font-size: 14px; height: 75vh; overflow-y: auto; padding-right: 4px;">
             <div id="vocab-list">載入中...</div>
         </div>
         <script>
             function speakWord(wordText) {
                 if (!wordText) return;
-                const utterance = new SpeechSynthesisUtterance(wordText);
-                utterance.lang = 'en-US';
-                utterance.rate = 0.9;
-                window.speechSynthesis.speak(utterance);
+                if ('speechSynthesis' in window) {
+                    window.speechSynthesis.cancel();
+                    const utterance = new SpeechSynthesisUtterance(wordText);
+                    utterance.lang = 'en-US';
+                    utterance.rate = 0.9;
+                    window.speechSynthesis.speak(utterance);
+                }
             }
             window.speakWord = speakWord;
 
@@ -629,7 +635,7 @@ with st.sidebar:
 
             renderVocab();
         </script>
-        """, height=500)
+        """, height=600)
 
     elif nav_choice == "⚙️ API 設定":
         st.markdown("### ⚙️ 系統與 API")
