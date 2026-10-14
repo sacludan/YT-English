@@ -367,9 +367,10 @@ def render_interactive_player(video_id, data):
                 if (Date.now() < manualSeekLockUntil) return;
                 const t = player.getCurrentTime();
                 let idx = -1;
-                for (let i = subs.length - 1; i >= 0; i--) {{
-                    if (t >= subs[i].start && t <= subs[i].end + 0.15) {{
+                for (let i = 0; i < subs.length; i++) {{
+                    if (t >= subs[i].start) {{
                         idx = i;
+                    }} else {{
                         break;
                     }}
                 }}
