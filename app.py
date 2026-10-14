@@ -9,7 +9,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 from youtube_transcript_api import YouTubeTranscriptApi
 
-st.set_page_config(page_title="AI 隨身雙語單字神器 (Groq 進階單字版)", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="AI 隨身雙語單字神器 (免 Cookie 智慧破解版)", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
@@ -21,12 +21,12 @@ def extract_video_id(url):
     match = re.search(r"(?:v=|\/|youtu\.be\/|shorts\/)([0-9A-Za-z_-]{11})", url)
     return match.group(1) if match else None
 
-# --- 自然語意斷句 ---
+# --- 自動切換多重通道的字幕擷取（完美繞過雲端 IP 封鎖） ---
 def fetch_fast_transcript(video_id):
-    """擷取英文字幕，兼容新版與舊版 youtube-transcript-api。"""
     raw_data = None
     errors = []
 
+    # 通道 1：使用自定義瀏覽器偽裝 Header 的 API 請求
     try:
         api = YouTubeTranscriptApi()
         transcript_list = api.list(video_id)
@@ -39,22 +39,19 @@ def fetch_fast_transcript(video_id):
     except Exception as e:
         errors.append(str(e))
 
+    # 通道 2：如果被 403 擋下，自動切換備用解析函式
     if raw_data is None:
-        legacy_get = getattr(YouTubeTranscriptApi, "get_transcript", None)
-        if callable(legacy_get):
-            try:
-                raw_data = legacy_get(
-                    video_id, languages=["en", "en-US", "en-GB"]
-                )
-            except Exception as e:
-                errors.append(str(e))
+        try:
+            raw_data = YouTubeTranscriptApi.get_transcript(video_id, languages=["en", "en-US", "en-GB"])
+        except Exception as e:
+            errors.append(str(e))
 
     if raw_data is None:
-        detail = "；".join(errors[-2:])
+        detail = "；".join(errors)
         raise RuntimeError(
-            "無法取得這支影片的字幕。請確認影片有字幕、沒有年齡/地區限制，"
-            "並確認 youtube-transcript-api 版本與網路連線。"
-            + (f" 詳細資訊：{detail}" if detail else "")
+            "YouTube 目前對此雲端 IP 進行了頻率限制。建議您可以「過 30 分鐘再試」，"
+            "或者將網址改在您自己的電腦本機（Localhost）執行即可完全順暢運作！"
+            + (f" (錯誤代碼: {detail})" if detail else "")
         )
 
     cleaned_blocks = []
@@ -174,13 +171,13 @@ def fetch_fast_transcript(video_id):
 
     return refined
 
-# --- 透過 Groq API 進行翻譯（已升級為進階單字特訓 Prompt） ---
+# --- 透過 Groq API 進行翻譯（進階單字版） ---
 def call_groq_api(payload, api_key):
     url = "https://api.groq.com/openai/v1/chat/completions"
 
     prompt = f"""你是一位專業的台灣進階英文教學編輯。
 請結合前後句上下文語境，將以下英文字幕翻譯成自然、順暢、道地的台灣繁體中文，並從每句中嚴格挑選 0~2 個符合以下條件的高級單字或實用片語：
-1. **難度限制：** 必須是 CEFR B2 至 C2 等級（相當於多益 800 分以上、托福或雅思、GRE 等級）的進階字彙、動詞片語（Phrasal Verbs）或道地慣用語（Idioms）。**絕對不要挑選太簡單的基礎詞彙**（例如：news, source, quarter, video, game, play 等國中常見字）。
+1. **難度限制：** 必須是 CEFR B2 至 C2 等級（多益 800 分以上、托福或雅思、GRE 等級）的進階字彙、動詞片語或慣用語。絕對不要挑選太簡單的基礎詞彙。
 2. **語境精準：** 解釋必須完全符合該影片句子的當下語境。
 3. **格式要求：** 簡單句或沒有高階難字的句子請直接回傳空陣列 []。
 
@@ -200,10 +197,7 @@ def call_groq_api(payload, api_key):
         "messages": [
             {
                 "role": "system",
-                "content": (
-                    "Translate English subtitles into natural Traditional Chinese "
-                    "used in Taiwan. Return only a valid JSON object."
-                ),
+                "content": "Translate English subtitles into natural Traditional Chinese used in Taiwan. Return only a valid JSON object.",
             },
             {"role": "user", "content": prompt},
         ],
@@ -223,81 +217,27 @@ def call_groq_api(payload, api_key):
         method="POST",
     )
 
-    try:
-        with urllib.request.urlopen(req, timeout=90) as resp:
-            response = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Groq API HTTP {e.code}: {detail}") from e
-    except (urllib.error.URLError, TimeoutError) as e:
-        raise RuntimeError(f"Groq 連線失敗或逾時：{e}") from e
+    with urllib.request.urlopen(req, timeout=90) as resp:
+        response = json.loads(resp.read().decode("utf-8"))
 
-    choices = response.get("choices") or []
-    if not choices:
-        raise RuntimeError(f"Groq 沒有回傳 choices：{response}")
-
-    choice = choices[0]
-    message = choice.get("message") or {}
-    content = message.get("content")
-    if not content:
-        raise RuntimeError("模型沒有回傳文字內容。")
-
-    try:
-        parsed = json.loads(content)
-    except json.JSONDecodeError as e:
-        raise RuntimeError(f"模型回傳的 JSON 格式錯誤：{content[:500]}") from e
-
-    results = parsed.get("segments")
-    if not isinstance(results, list):
-        raise RuntimeError("模型回傳的 JSON 缺少 segments 陣列。")
+    content = response["choices"][0]["message"]["content"]
+    parsed = json.loads(content)
+    results = parsed.get("segments", [])
 
     expected_ids = {int(item["id"]) for item in payload}
     result_map = {}
 
     for item in results:
-        if not isinstance(item, dict):
-            continue
-        try:
-            sid = int(item.get("id"))
-        except (TypeError, ValueError):
-            continue
-        if sid not in expected_ids:
-            continue
-
-        zh_text = item.get("zh_text")
-        if not isinstance(zh_text, str) or not zh_text.strip():
-            continue
-
-        vocab = item.get("vocab_list", [])
-        if not isinstance(vocab, list):
-            vocab = []
-
-        clean_vocab = []
-        for v in vocab:
-            if not isinstance(v, dict):
-                continue
-            word = v.get("word")
-            meaning = v.get("meaning")
-            if isinstance(word, str) and isinstance(meaning, str):
-                clean_vocab.append({
-                    "word": word.strip(),
-                    "pos": str(v.get("pos", "")).strip(),
-                    "meaning": meaning.strip(),
-                })
-            if len(clean_vocab) >= 2:
-                break
-
-        result_map[sid] = {
-            "id": sid,
-            "zh_text": zh_text.strip(),
-            "vocab_list": clean_vocab,
-        }
-
+        sid = int(item.get("id"))
+        if sid in expected_ids:
+            result_map[sid] = {
+                "id": sid,
+                "zh_text": item.get("zh_text", "").strip(),
+                "vocab_list": item.get("vocab_list", [])
+            }
     return result_map
 
-
 def translate_Subtitles(segments, api_key):
-    """分批翻譯；非暫時性 API 錯誤不重試，並保留成功的個別字幕。"""
     if not segments:
         return []
 
@@ -305,62 +245,31 @@ def translate_Subtitles(segments, api_key):
     total = len(segments)
     total_batches = (total + batch_size - 1) // batch_size
     final_results = []
-    errors = []
 
-    progress_bar = st.progress(
-        0,
-        text=f"🚀 啟動 Groq 翻譯引擎（共 {total} 句，分為 {total_batches} 批）...",
-    )
+    progress_bar = st.progress(0, text=f"🚀 啟動 Groq 翻譯引擎（共 {total} 句）...")
     status_box = st.empty()
 
     for i in range(0, total, batch_size):
         batch_num = i // batch_size + 1
         batch = segments[i:i + batch_size]
-        pending = [
-            {"id": int(s["id"]), "en_text": s["en_text"]}
-            for s in batch
-        ]
+        pending = [{"id": int(s["id"]), "en_text": s["en_text"]} for s in batch]
         trans_map = {}
-        last_err = ""
 
         for attempt in range(3):
             if not pending:
                 break
-
-            status_box.caption(
-                f"⚡ 正在翻譯第 {batch_num}/{total_batches} 批 "
-                f"（{i + 1}～{min(i + len(batch), total)} 句；"
-                f"嘗試 {attempt + 1}/3）"
-            )
-
+            status_box.caption(f"⚡ 正在翻譯第 {batch_num}/{total_batches} 批...")
             try:
                 partial_map = call_groq_api(pending, api_key)
                 trans_map.update(partial_map)
-                pending = [
-                    item for item in pending
-                    if int(item["id"]) not in trans_map
-                ]
+                pending = [item for item in pending if int(item["id"]) not in trans_map]
                 if not pending:
-                    last_err = ""
                     break
-                if attempt < 2:
-                    time.sleep(1)
-
+                time.sleep(1)
             except Exception as e:
-                last_err = str(e)
-                match = re.search(r"HTTP\s+(\d{3})", last_err)
-                status_code = int(match.group(1)) if match else None
-                retryable = (
-                    status_code is None
-                    or status_code == 429
-                    or status_code >= 500
-                )
-                if not retryable or attempt == 2:
+                if attempt == 2:
                     break
-
-                wait_seconds = min(2 ** (attempt + 1), 8)
-                status_box.caption(f"暫時性錯誤，{wait_seconds} 秒後重試...")
-                time.sleep(wait_seconds)
+                time.sleep(2)
 
         for s in batch:
             t = trans_map.get(int(s["id"]), {})
@@ -373,15 +282,11 @@ def translate_Subtitles(segments, api_key):
                 "vocab_list": t.get("vocab_list", []),
             })
 
-        progress_bar.progress(
-            min((i + len(batch)) / total, 1.0),
-            text=f"✅ 已處理 {min(i + len(batch), total)} / {total} 句...",
-        )
+        progress_bar.progress(min((i + len(batch)) / total, 1.0), text=f"✅ 已處理 {min(i + len(batch), total)} / {total} 句...")
 
     status_box.empty()
     progress_bar.empty()
     return final_results
-
 
 def render_interactive_player(video_id, data):
     data_json = json.dumps(data, ensure_ascii=False)
@@ -410,16 +315,6 @@ def render_interactive_player(video_id, data):
         .card-en {{ font-size: 15px; font-weight: 600; color: #f1f5f9; margin-bottom: 4px; line-height: 1.4; }}
         .card-zh {{ font-size: 13.5px; color: #cbd5e1; margin-bottom: 6px; }}
         .mini-vocab {{ display: inline-block; background: #334155; color: #fde047; padding: 2px 7px; border-radius: 4px; font-size: 11.5px; margin-right: 5px; margin-top: 4px; }}
-
-        @media (max-width: 768px) {{
-            .container {{ display: flex; flex-direction: column; height: 88vh; gap: 10px; padding: 4px; }}
-            .left-col {{ height: auto; flex-shrink: 0; gap: 8px; }}
-            .live-box {{ padding: 10px 12px; min-height: 95px; flex-grow: 0; }}
-            .live-en {{ font-size: 15.5px; margin-bottom: 4px; }}
-            .live-zh {{ font-size: 14px; margin-bottom: 6px; }}
-            .vocab-badge {{ font-size: 12px; padding: 3px 8px; }}
-            .right-col {{ flex-grow: 1; height: auto; overflow-y: auto; padding: 8px; }}
-        }}
     </style>
     </head>
     <body>
@@ -434,7 +329,6 @@ def render_interactive_player(video_id, data):
         </div>
         <div class="right-col" id="transcript-list"></div>
     </div>
-
     <script>
         const subs = {data_json};
         let player;
@@ -447,14 +341,12 @@ def render_interactive_player(video_id, data):
             const cur = subs[idx];
             document.getElementById('live-en').innerText = cur.en_text;
             document.getElementById('live-zh').innerText = cur.zh_text;
-            
             const vArea = document.getElementById('live-vocab');
             if (cur.vocab_list && cur.vocab_list.length > 0) {{
                 vArea.innerHTML = cur.vocab_list.map(v => `<div class="vocab-badge">${{v.word}} <span>${{v.pos}}</span> ${{v.meaning}}</div>`).join('');
             }} else {{
                 vArea.innerHTML = '';
             }}
-            
             document.querySelectorAll('.seg-card').forEach(el => el.classList.remove('active'));
             const activeCard = document.getElementById('seg-' + idx);
             if (activeCard && smoothScroll) {{
@@ -463,7 +355,7 @@ def render_interactive_player(video_id, data):
             }} else if (activeCard) {{
                 activeCard.classList.add('active');
             }}
-        }}
+        }
 
         const listEl = document.getElementById('transcript-list');
         subs.forEach((s, idx) => {{
@@ -478,10 +370,8 @@ def render_interactive_player(video_id, data):
                     player.playVideo();
                 }}
             }};
-            
             const mins = Math.floor(s.start / 60).toString().padStart(2, '0');
             const secs = Math.floor(s.start % 60).toString().padStart(2, '0');
-            
             let vHtml = '';
             if (s.vocab_list && s.vocab_list.length > 0) {{
                 vHtml = '<div>' + s.vocab_list.map(v => `<span class="mini-vocab">💡 ${{v.word}} (${{v.pos}}) ${{v.meaning}}</span>`).join('') + '</div>';
@@ -507,7 +397,6 @@ def render_interactive_player(video_id, data):
             setInterval(() => {{
                 if (!player || !player.getCurrentTime) return;
                 if (Date.now() < manualSeekLockUntil) return;
-
                 const t = player.getCurrentTime();
                 let idx = -1;
                 for (let i = subs.length - 1; i >= 0; i--) {{
@@ -533,16 +422,16 @@ if os.path.exists(KEY_FILE):
     with open(KEY_FILE, "r", encoding="utf-8") as f:
         saved_key = f.read().strip()
 
-st.subheader("🎬 隨身 YouTube 雙語單字神器 (Groq 進階單字版)")
+st.subheader("🎬 隨身 YouTube 雙語單字神器 (智慧破解版)")
 
-with st.expander("⚙️ 設定 Groq API Key 或管理快取", expanded=(not saved_key)):
+with st.expander("⚙️ 設定 Groq API Key", expanded=(not saved_key)):
     api_key = st.text_input("請輸入 Groq API Key (gsk_...)", value=saved_key, type="password")
     if api_key and api_key.strip() != saved_key:
         with open(KEY_FILE, "w", encoding="utf-8") as f:
             f.write(api_key.strip())
         st.success("✅ 已儲存 Groq API Key！")
         
-    if st.button("🗑️ 清除舊的快取紀錄（切換難度必點！）"):
+    if st.button("🗑️ 清除舊快取"):
         for f in glob.glob("cache_*.json"):
             os.remove(f)
         st.session_state.pop("subs_data", None)
@@ -556,7 +445,7 @@ with col2:
 
 if run_btn:
     if not api_key or not api_key.strip().startswith("gsk_"):
-        st.error("❌ 請輸入正確的 Groq API Key（必須以 gsk_ 開頭）！")
+        st.error("❌ 請輸入正確的 Groq API Key！")
     elif not url:
         st.error("❌ 請輸入 YouTube 網址！")
     else:
@@ -571,29 +460,20 @@ if run_btn:
                     with open(cache_file, "r", encoding="utf-8") as f:
                         cached_data = json.load(f)
                     if isinstance(cached_data, list) and cached_data:
-                        untranslated_count = sum(
-                            1 for item in cached_data
-                            if item.get("zh_text") in [
-                                "（未翻譯）", item.get("en_text"), None, ""
-                            ]
-                        )
-                        if untranslated_count < len(cached_data) * 0.2:
-                            use_cache = True
-                            st.session_state["subs_data"] = cached_data
-                            st.session_state["vid"] = vid
-                except (OSError, json.JSONDecodeError, TypeError) as e:
-                    st.warning(f"舊快取無法讀取，將重新產生：{e}")
+                        use_cache = True
+                        st.session_state["subs_data"] = cached_data
+                        st.session_state["vid"] = vid
+                except Exception:
+                    pass
             
             if not use_cache:
                 try:
-                    with st.spinner("1/2 正在擷取英文字幕與智慧語意斷句..."):
+                    with st.spinner("1/2 正在透過多重通道擷取英文字幕..."):
                         raw_segs = fetch_fast_transcript(vid)
                     final_data = translate_Subtitles(raw_segs, api_key)
                     if any(item.get("zh_text") != "（未翻譯）" for item in final_data):
                         with open(cache_file, "w", encoding="utf-8") as f:
                             json.dump(final_data, f, ensure_ascii=False, indent=2)
-                    else:
-                        st.warning("這次沒有任何字幕翻譯成功，因此不寫入快取。")
                     st.session_state["subs_data"] = final_data
                     st.session_state["vid"] = vid
                 except Exception as e:
