@@ -2,6 +2,7 @@ import os
 import re
 import json
 import glob
+import time
 import streamlit as st
 import streamlit.components.v1 as components
 from youtube_transcript_api import YouTubeTranscriptApi
@@ -10,7 +11,7 @@ from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
 
-st.set_page_config(page_title="雲端 AI 雙語字幕神器", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="AI 隨身雙語字幕神器", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
@@ -27,27 +28,17 @@ class VocabItem(BaseModel):
 class SubtitleSegment(BaseModel):
     id: int
     zh_text: str = Field(description="自然流暢、符合台灣用語習慣的繁體中文翻譯")
-    vocab_list: list[VocabItem] = Field(description="挑選 1~3 個值得學習的進階單字或片語（CEFR B2以上或實用商務/科技詞彙），簡單句可留空")
+    vocab_list: list[VocabItem] = Field(description="挑選 1~2 個值得學習的進階單字或片語（CEFR B2以上或實用詞彙），簡單句可留空陣列")
 
 class BatchOutput(BaseModel):
     segments: list[SubtitleSegment]
-
-class FullAudioSegment(BaseModel):
-    start: float = Field(description="該句開始秒數，例如 12.5")
-    end: float = Field(description="該句結束秒數，例如 16.2")
-    en_text: str = Field(description="英文原句")
-    zh_text: str = Field(description="台灣繁體中文翻譯")
-    vocab_list: list[VocabItem] = Field(description="1~3個重點單字")
-
-class FullAudioOutput(BaseModel):
-    segments: list[FullAudioSegment]
 
 def extract_video_id(url):
     match = re.search(r"(?:v=|\/|youtu\.be\/|shorts\/)([0-9A-Za-z_-]{11})", url)
     return match.group(1) if match else None
 
-# --- 雲端極速抓取字幕與智慧重新斷句 ---
-def fetch_cloud_transcript(video_id, max_words=14):
+# --- 極速抓取時間軸與智慧斷句 ---
+def fetch_fast_transcript(video_id, max_words=14):
     try:
         ytt_api = YouTubeTranscriptApi()
         transcript_list = ytt_api.list(video_id)
@@ -57,7 +48,6 @@ def fetch_cloud_transcript(video_id, max_words=14):
             transcript = next(iter(transcript_list))
         raw_data = transcript.fetch()
     except Exception:
-        # 兼容舊版語法
         raw_data = YouTubeTranscriptApi.get_transcript(video_id, languages=['en', 'en-US', 'en-GB'])
 
     words_with_time = []
@@ -104,38 +94,50 @@ def fetch_cloud_transcript(video_id, max_words=14):
         })
     return refined
 
-# --- 翻譯與萃取單字 ---
+# --- 穩定版批次翻譯與單字萃取（含自動重試與防截斷） ---
 def translate_Subtitles(segments, api_key):
-    client = genai.Client(api_key=api_key)
-    batch_size = 30
+    clean_key = api_key.strip()
+    client = genai.Client(api_key=clean_key)
+    batch_size = 15  # 縮小批次確保 JSON 絕不被截斷
     final_results = []
-    progress_bar = st.progress(0, text="☁️ 雲端 AI 正在進行語境翻譯與重點單字萃取...")
+    progress_bar = st.progress(0, text="🤖 AI 正在進行語境翻譯與重點單字萃取...")
+    error_shown = False
     
     for i in range(0, len(segments), batch_size):
         batch = segments[i:i+batch_size]
         payload = [{"id": s["id"], "en_text": s["en_text"]} for s in batch]
         prompt = f"""
         你是一位專業的台灣英文教學頻道主編（風格類似「巨人英文」）。
-        請將以下英文字幕（注意：部分無標點符號的句子請自動根據語意順暢翻譯）翻成自然、道地的台灣繁體中文，
-        並從每句中挑出 1~3 個中高級（B2-C2）、少見或極具實戰價值的單字或片語。
+        請將以下英文字幕翻譯成自然、道地的台灣繁體中文，並從每句中挑出 1~2 個中高級（B2-C2）、少見或實用的單字或片語。
+        請確保回傳的 id 與輸入完全對應。
         
         字幕資料：
         {json.dumps(payload, ensure_ascii=False)}
         """
-        try:
-            resp = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema=BatchOutput,
-                    temperature=0.2,
+        
+        trans_map = {}
+        # 內建最多 3 次自動重試（應付免費版 API 瞬間流量限制）
+        for attempt in range(3):
+            try:
+                resp = client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        response_schema=BatchOutput,
+                        temperature=0.2,
+                    )
                 )
-            )
-            parsed = json.loads(resp.text)
-            trans_map = {item["id"]: item for item in parsed.get("segments", [])}
-        except Exception:
-            trans_map = {}
+                parsed = json.loads(resp.text)
+                trans_map = {item["id"]: item for item in parsed.get("segments", [])}
+                break  # 成功就跳出重試迴圈
+            except Exception as e:
+                if attempt < 2:
+                    time.sleep(3)  # 休息 3 秒再試
+                else:
+                    if not error_shown:
+                        st.error(f"⚠️ Gemini API 回報錯誤：{e}（請檢查 API Key 是否正確，或免費額度是否達上限）")
+                        error_shown = True
 
         for s in batch:
             t = trans_map.get(s["id"], {})
@@ -148,35 +150,10 @@ def translate_Subtitles(segments, api_key):
                 "vocab_list": t.get("vocab_list", [])
             })
         progress_bar.progress(min((i + batch_size) / len(segments), 1.0), text=f"已處理 {min(i + batch_size, len(segments))} / {len(segments)} 句...")
+        time.sleep(1)  # 溫和呼叫，保護免費版 API 不被鎖
         
     progress_bar.empty()
     return final_results
-
-# --- 備用方案：若影片完全無內建CC字幕，直接交由 Gemini 雲端聽寫 ---
-def fallback_gemini_audio(url, video_id, api_key):
-    client = genai.Client(api_key=api_key)
-    for f in glob.glob(f"audio_{video_id}.*"):
-        os.remove(f)
-    ydl_opts = {'format': 'worstaudio/worst', 'outtmpl': f'audio_{video_id}.%(ext)s', 'quiet': True, 'noplaylist': True}
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([url])
-    audio_file = glob.glob(f"audio_{video_id}.*")[0]
-    
-    uploaded = client.files.upload(file=audio_file)
-    resp = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=[uploaded, "請將這段英文音訊轉錄為雙語字幕（每句約8~14字），並提供精確的開始與結束秒數、台灣繁體中文翻譯與1~3個重點單字解析。"],
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=FullAudioOutput,
-            temperature=0.2,
-        )
-    )
-    os.remove(audio_file)
-    parsed = json.loads(resp.text).get("segments", [])
-    for idx, item in enumerate(parsed):
-        item["id"] = idx + 1
-    return parsed
 
 def render_interactive_player(video_id, data):
     data_json = json.dumps(data, ensure_ascii=False)
@@ -298,25 +275,37 @@ def render_interactive_player(video_id, data):
     """
     components.html(html_code, height=780)
 
-# --- 讀取雲端 Secrets 或使用者輸入的 API Key ---
-default_key = st.secrets.get("GEMINI_API_KEY", "") if "GEMINI_API_KEY" in st.secrets else ""
+# --- 讀取 API Key ---
+KEY_FILE = "saved_api_key.txt"
+saved_key = ""
+try:
+    if "GEMINI_API_KEY" in st.secrets:
+        saved_key = st.secrets["GEMINI_API_KEY"]
+except Exception:
+    pass
 
-st.subheader("☁️ 隨身 YouTube 雙語單字神器 (純雲端免開電腦版)")
+if not saved_key and os.path.exists(KEY_FILE):
+    with open(KEY_FILE, "r", encoding="utf-8") as f:
+        saved_key = f.read().strip()
 
-with st.expander("⚙️ 設定 API Key 或切換歷史影片"):
-    api_key = st.text_input("Gemini API Key", value=default_key, type="password", help="若在 Streamlit Cloud 後台設定 Secrets，此處即會自動帶入免重打！")
-    cache_files = glob.glob("cache_*.json")
-    if cache_files:
-        vid_options = [f.replace("cache_", "").replace(".json", "") for f in cache_files]
-        selected_vid = st.selectbox("📂 載入已翻譯過的影片：", ["請選擇..."] + vid_options)
-        if selected_vid != "請選擇...":
-            with open(f"cache_{selected_vid}.json", "r", encoding="utf-8") as f:
-                st.session_state["subs_data"] = json.load(f)
-                st.session_state["vid"] = selected_vid
+st.subheader("🎬 隨身 YouTube 雙語單字神器")
+
+with st.expander("⚙️ 設定 API Key 或管理快取", expanded=(not saved_key)):
+    api_key = st.text_input("Gemini API Key", value=saved_key, type="password")
+    if api_key and api_key.strip() != saved_key:
+        with open(KEY_FILE, "w", encoding="utf-8") as f:
+            f.write(api_key.strip())
+        st.success("✅ 已儲存 API Key！")
+        
+    if st.button("🗑️ 清除舊的失敗快取紀錄（若之前顯示翻譯失敗請點此）"):
+        for f in glob.glob("cache_*.json"):
+            os.remove(f)
+        st.session_state.pop("subs_data", None)
+        st.success("✅ 已清除快取！請重新點擊下方「🚀 生成字幕」。")
 
 col1, col2 = st.columns([3, 1])
 with col1:
-    url = st.text_input("🔗 貼上 YouTube 網址：", label_visibility="collapsed", placeholder="貼上 YouTube 影片或手機分享網址...")
+    url = st.text_input("🔗 貼上 YouTube 網址：", label_visibility="collapsed", placeholder="貼上 YouTube 影片網址...")
 with col2:
     run_btn = st.button("🚀 生成字幕", type="primary", use_container_width=True)
 
@@ -331,23 +320,27 @@ if run_btn:
             st.error("❌ 網址格式無法辨識。")
         else:
             cache_file = f"cache_{vid}.json"
+            # 如果快取裡面有「翻譯生成失敗」，就自動重跑不讀舊快取
+            use_cache = False
             if os.path.exists(cache_file):
                 with open(cache_file, "r", encoding="utf-8") as f:
-                    st.session_state["subs_data"] = json.load(f)
+                    cached_data = json.load(f)
+                if cached_data and cached_data[0].get("zh_text") != "（翻譯生成失敗）":
+                    use_cache = True
+                    st.session_state["subs_data"] = cached_data
                     st.session_state["vid"] = vid
-            else:
+            
+            if not use_cache:
                 try:
-                    with st.spinner("1/2 正在從雲端極速擷取時間軸與斷句..."):
-                        raw_segs = fetch_cloud_transcript(vid)
+                    with st.spinner("1/2 正在極速擷取英文字幕與智慧斷句..."):
+                        raw_segs = fetch_fast_transcript(vid)
                     final_data = translate_Subtitles(raw_segs, api_key)
-                except Exception:
-                    with st.spinner("此影片無內建時間軸，正在啟動 Gemini 雲端語音聽寫與翻譯（約需 30 秒）..."):
-                        final_data = fallback_gemini_audio(url, vid, api_key)
-                
-                with open(cache_file, "w", encoding="utf-8") as f:
-                    json.dump(final_data, f, ensure_ascii=False, indent=2)
-                st.session_state["subs_data"] = final_data
-                st.session_state["vid"] = vid
+                    with open(cache_file, "w", encoding="utf-8") as f:
+                        json.dump(final_data, f, ensure_ascii=False, indent=2)
+                    st.session_state["subs_data"] = final_data
+                    st.session_state["vid"] = vid
+                except Exception as e:
+                    st.error(f"❌ 擷取字幕失敗：{e}")
 
 if "subs_data" in st.session_state and "vid" in st.session_state:
     render_interactive_player(st.session_state["vid"], st.session_state["subs_data"])
