@@ -9,7 +9,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 from youtube_transcript_api import YouTubeTranscriptApi
 
-st.set_page_config(page_title="AI 隨身雙語單字神器 (Cookie 破解版)", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="AI 隨身雙語單字神器", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
@@ -21,21 +21,14 @@ def extract_video_id(url):
     match = re.search(r"(?:v=|\/|youtu\.be\/|shorts\/)([0-9A-Za-z_-]{11})", url)
     return match.group(1) if match else None
 
-# --- 支援 Cookie 驗證的字幕擷取 ---
+# --- 字幕擷取核心 ---
 def fetch_fast_transcript(video_id):
     raw_data = None
     errors = []
-    
-    cookie_file = "cookies.txt"
-    has_cookies = os.path.exists(cookie_file)
 
     try:
         api = YouTubeTranscriptApi()
-        if has_cookies:
-            transcript_list = api.list(video_id, cookies=cookie_file)
-        else:
-            transcript_list = api.list(video_id)
-            
+        transcript_list = api.list(video_id)
         try:
             transcript = transcript_list.find_transcript(["en", "en-US", "en-GB"])
         except Exception:
@@ -46,10 +39,16 @@ def fetch_fast_transcript(video_id):
         errors.append(str(e))
 
     if raw_data is None:
+        try:
+            raw_data = YouTubeTranscriptApi.get_transcript(video_id, languages=["en", "en-US", "en-GB"])
+        except Exception as e:
+            errors.append(str(e))
+
+    if raw_data is None:
         detail = "；".join(errors)
         raise RuntimeError(
-            "無法取得字幕。請確認是否已將 cookies.txt 上傳至 GitHub 專案根目錄！"
-            + (f" (詳細錯誤: {detail})" if detail else "")
+            "無法取得字幕。YouTube 目前對此雲端 IP 進行了頻率限制，建議稍候再試。"
+            + (f" (錯誤詳情: {detail})" if detail else "")
         )
 
     cleaned_blocks = []
@@ -420,7 +419,7 @@ if os.path.exists(KEY_FILE):
     with open(KEY_FILE, "r", encoding="utf-8") as f:
         saved_key = f.read().strip()
 
-st.subheader("🎬 隨身 YouTube 雙語單字神器 (Cookie 破解版)")
+st.subheader("🎬 隨身 YouTube 雙語單字神器")
 
 with st.expander("⚙️ 設定 Groq API Key", expanded=(not saved_key)):
     api_key = st.text_input("請輸入 Groq API Key (gsk_...)", value=saved_key, type="password")
@@ -466,7 +465,7 @@ if run_btn:
             
             if not use_cache:
                 try:
-                    with st.spinner("1/2 正在透過 Cookie 驗證擷取英文字幕..."):
+                    with st.spinner("1/2 正在透過多重通道擷取英文字幕..."):
                         raw_segs = fetch_fast_transcript(vid)
                     final_data = translate_Subtitles(raw_segs, api_key)
                     if any(item.get("zh_text") != "（未翻譯）" for item in final_data):
