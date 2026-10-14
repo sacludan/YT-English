@@ -18,12 +18,9 @@ def extract_video_id(url):
 def fetch_fast_transcript(video_id):
     raw_data = None
     errors = []
-
-    # 確保 cookie 檔案存在
     cookie_file = "cookies.txt"
     has_cookies = os.path.exists(cookie_file)
 
-    # 用最安全、絕不崩潰的命令列方式調用 yt-dlp 抓取字幕
     try:
         cmd = ["yt-dlp", "--skip-download", "--write-subs", "--write-auto-subs", "--sub-lang", "en,en-US,en-GB", "--print-json", f"https://www.youtube.com/watch?v={video_id}"]
         if has_cookies:
@@ -76,7 +73,7 @@ def fetch_fast_transcript(video_id):
     if raw_data is None:
         detail = "；".join(errors)
         raise RuntimeError(
-            "無法取得字幕。請確認是否已將 cookies.txt 上傳至 GitHub 專案根目錄，或是影片無英文字幕！"
+            "無法取得字幕。請確認是否已將 cookies.txt 上傳至 GitHub 專案根目錄！"
             + (f" (詳細錯誤: {detail})" if detail else "")
         )
 
@@ -350,9 +347,11 @@ def render_interactive_player(video_id, data):
 
         function activateSegment(idx, smoothScroll = true) {{
             if (idx < 0 || idx >= subs.length) return;
-            if (activeIdx === idx) return;
             activeIdx = idx;
+            
+            // 暴力清除所有卡片的 active 狀態，確保絕對只有唯一一張亮藍色
             document.querySelectorAll('.seg-card').forEach(el => el.classList.remove('active'));
+            
             const activeCard = document.getElementById('seg-' + idx);
             if (activeCard) {{
                 activeCard.classList.add('active');
@@ -423,7 +422,7 @@ def render_interactive_player(video_id, data):
                     }}
                 }}
 
-                if (idx !== -1) {{
+                if (idx !== -1 && idx !== activeIdx) {{
                     activateSegment(idx, true);
                 }}
             }}, 100);
