@@ -88,22 +88,121 @@ def fetch_fast_transcript(video_id):
         detail = "；".join(errors)
         raise RuntimeError(f"無法取得字幕。(詳細錯誤: {detail})")
 
-    refined = []
-    for idx, item in enumerate(raw_data):
+    cleaned_blocks = []
+    for item in raw_data:
         text = str(item["text"] if isinstance(item, dict) else item.text).replace("\n", " ").strip()
         start = float(item["start"] if isinstance(item, dict) else item.start)
         duration_value = item.get("duration") if isinstance(item, dict) else getattr(item, "duration", None)
         if duration_value is None:
             end_value = item.get("end") if isinstance(item, dict) else getattr(item, "end", None)
-            duration_value = max(0.5, float(end_value) - start) if end_value is not None else 2.0
-        
+            duration_value = max(0.05, float(end_value) - start) if end_value is not None else 1.0
+        duration = float(duration_value)
         if text:
-            refined.append({
-                "id": idx + 1,
-                "start": round(start, 2),
-                "end": round(start + float(duration_value), 2),
-                "en_text": text
+            cleaned_blocks.append({"text": text, "start": start, "end": start + duration})
+
+    for i in range(len(cleaned_blocks) - 1):
+        if cleaned_blocks[i]["end"] > cleaned_blocks[i + 1]["start"]:
+            cleaned_blocks[i]["end"] = cleaned_blocks[i + 1]["start"]
+
+    # 將碎字幕拆解成單字與精確時間軸，再進行智慧斷句重組
+    words_with_time = []
+    for b in cleaned_blocks:
+        words = b["text"].split()
+        if not words:
+            continue
+        dur = max(0.05, b["end"] - b["start"])
+        word_dur = dur / len(words)
+        for i, w in enumerate(words):
+            words_with_time.append({
+                "word": w,
+                "start": b["start"] + i * word_dur,
+                "end": b["start"] + (i + 1) * word_dur
             })
+
+    NO_END_WORDS = {
+        'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from', 'about', 'into', 'than', 'after', 'before',
+        'the', 'a', 'an', 'my', 'your', 'his', 'her', 'its', 'our', 'their', 'this', 'that', 'these', 'those',
+        'and', 'or', 'but', 'if', 'because', 'as', 'until', 'while', 'who', 'whom', 'whose', 'which', 'what', 'when', 'where', 'how',
+        'is', 'am', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did',
+        'will', 'would', 'shall', 'should', 'can', 'could', 'may', 'might', 'must',
+        'very', 'too', 'so', 'not', 'no', 'more', 'most', 'quite', 'pretty', 'much', 'such',
+        'early', 'late', 'mid', 'next', 'last', 'every', 'each', 'another', 'other', 'new', 'old', 'good', 'best', 'first', 'second'
+    }
+    CLAUSE_STARTERS = {
+        'because', 'although', 'though', 'while', 'if', 'unless', 'until', 'since',
+        'when', 'whenever', 'where', 'wherever', 'which', 'who', 'whom', 'whose', 'whether'
+    }
+    ABBREVS = {'mr.', 'mrs.', 'ms.', 'dr.', 'st.', 'u.s.', 'inc.', 'co.', 'vs.', 'etc.', 'e.g.', 'i.e.'}
+
+    def is_sentence_end(word_str):
+        return word_str.endswith(('.', '?', '!')) and word_str.lower() not in ABBREVS
+
+    def is_clause_end(word_str):
+        return word_str.endswith((',', ';', ':', '—', '-'))
+
+    refined = []
+    curr = []
+    seg_id = 1
+    total_w = len(words_with_time)
+
+    for i, w in enumerate(words_with_time):
+        curr.append(w)
+        w_str = w["word"]
+        clean_w = re.sub(r'[^\w\']', '', w_str.lower())
+        
+        next_w = words_with_time[i + 1] if i + 1 < total_w else None
+        next_clean = re.sub(r'[^\w\']', '', next_w["word"].lower()) if next_w else ""
+
+        punct_coming_soon = False
+        for look_idx in range(1, 4):
+            if i + look_idx < total_w:
+                future_w = words_with_time[i + look_idx]["word"]
+                if is_sentence_end(future_w) or is_clause_end(future_w):
+                    punct_coming_soon = True
+                    break
+
+        should_split = False
+
+        if is_sentence_end(w_str):
+            should_split = True
+        elif is_clause_end(w_str) and len(curr) >= 5:
+            should_split = True
+        elif not punct_coming_soon and len(curr) >= 9 and next_clean in CLAUSE_STARTERS and clean_w not in NO_END_WORDS:
+            should_split = True
+        elif not punct_coming_soon and len(curr) >= 12 and next_clean in {'and', 'but', 'so', 'or'} and clean_w not in NO_END_WORDS:
+            should_split = True
+        elif not punct_coming_soon and len(curr) >= 16 and clean_w not in NO_END_WORDS:
+            should_split = True
+        elif len(curr) >= 24 and clean_w not in NO_END_WORDS:
+            should_split = True
+        elif len(curr) >= 28:
+            should_split = True
+
+        if should_split:
+            refined.append({
+                "id": seg_id,
+                "start": round(curr[0]["start"], 2),
+                "end": round(curr[-1]["end"], 2),
+                "en_text": " ".join([x["word"] for x in curr])
+            })
+            seg_id += 1
+            curr = []
+
+    if curr:
+        if len(curr) <= 2 and refined:
+            refined[-1]["end"] = round(curr[-1]["end"], 2)
+            refined[-1]["en_text"] += " " + " ".join([x["word"] for x in curr])
+        else:
+            refined.append({
+                "id": seg_id,
+                "start": round(curr[0]["start"], 2),
+                "end": round(curr[-1]["end"], 2),
+                "en_text": " ".join([x["word"] for x in curr])
+            })
+
+    for i in range(len(refined) - 1):
+        if refined[i]["end"] >= refined[i + 1]["start"]:
+            refined[i]["end"] = round(max(refined[i]["start"] + 0.1, refined[i + 1]["start"] - 0.02), 2)
 
     return refined
 
@@ -314,11 +413,20 @@ def render_interactive_player(video_id, data):
                 
                 let idx = -1;
                 for (let i = 0; i < subs.length; i++) {{
-                    const currentStart = subs[i].start;
-                    const nextStart = (i + 1 < subs.length) ? subs[i + 1].start : 999999;
-                    if (t >= currentStart && t < nextStart) {{
+                    if (t >= subs[i].start && t <= subs[i].end + 0.2) {{
                         idx = i;
                         break;
+                    }}
+                }}
+                if (idx === -1) {{
+                    for (let i = 0; i < subs.length; i++) {{
+                        if (t < subs[i].start) {{
+                            idx = Math.max(0, i - 1);
+                            break;
+                        }}
+                    }}
+                    if (idx === -1 && subs.length > 0) {{
+                        idx = subs.length - 1;
                     }}
                 }}
 
@@ -348,7 +456,7 @@ with st.expander("⚙️ 設定 Groq API Key", expanded=(not saved_key)):
             f.write(api_key.strip())
         st.success("✅ 已儲存 Groq API Key！")
         
-    if st.button("🗑️ 清除舊快取"):
+    if st.button("🗑️ 清除舊快取 (更新斷字邏輯必點)"):
         for f in glob.glob("cache_*.json"):
             os.remove(f)
         st.session_state.pop("subs_data", None)
@@ -385,7 +493,7 @@ if run_btn:
             
             if not use_cache:
                 try:
-                    with st.spinner("1/2 正在擷取英文字幕並由 AI 產出高階單字卡..."):
+                    with st.spinner("1/2 正在透過智慧斷句重組字幕並由 AI 產出高階單字卡..."):
                         raw_segs = fetch_fast_transcript(vid)
                     final_data = translate_Subtitles(raw_segs, api_key)
                     if any(item.get("zh_text") != "（未翻譯）" for item in final_data):
