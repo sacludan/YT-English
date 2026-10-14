@@ -9,7 +9,7 @@ import urllib.error
 import streamlit as st
 import streamlit.components.v1 as components
 
-st.set_page_config(page_title="AI 隨身雙語單字神器 (安全破解版)", layout="centered", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="AI 隨身雙語單字神器", layout="centered", initial_sidebar_state="collapsed")
 
 def extract_video_id(url):
     match = re.search(r"(?:v=|\/|youtu\.be\/|shorts\/)([0-9A-Za-z_-]{11})", url)
@@ -349,7 +349,7 @@ def render_interactive_player(video_id, data):
             if (idx < 0 || idx >= subs.length) return;
             activeIdx = idx;
             
-            // 暴力清除所有卡片的 active 狀態，確保絕對只有唯一一張亮藍色
+            // 絕對排他：先強制清空所有卡片的 active，再只幫當前索引加上 active
             document.querySelectorAll('.seg-card').forEach(el => el.classList.remove('active'));
             
             const activeCard = document.getElementById('seg-' + idx);
@@ -403,22 +403,14 @@ def render_interactive_player(video_id, data):
                 if (Date.now() < manualSeekLockUntil) return;
                 const t = player.getCurrentTime();
                 
+                // 絕對嚴格的單一區間對應：只抓當前秒數落在哪一個分段的 [start, next_start) 之間
                 let idx = -1;
                 for (let i = 0; i < subs.length; i++) {{
-                    if (t >= subs[i].start && t <= subs[i].end + 0.2) {{
+                    const currentStart = subs[i].start;
+                    const nextStart = (i + 1 < subs.length) ? subs[i + 1].start : 999999;
+                    if (t >= currentStart && t < nextStart) {{
                         idx = i;
                         break;
-                    }}
-                }}
-                if (idx === -1) {{
-                    for (let i = 0; i < subs.length; i++) {{
-                        if (t < subs[i].start) {{
-                            idx = Math.max(0, i - 1);
-                            break;
-                        }}
-                    }}
-                    if (idx === -1 && subs.length > 0) {{
-                        idx = subs.length - 1;
                     }}
                 }}
 
@@ -439,7 +431,7 @@ if os.path.exists(KEY_FILE):
     with open(KEY_FILE, "r", encoding="utf-8") as f:
         saved_key = f.read().strip()
 
-st.subheader("🎬 隨身 YouTube 雙語單字神器 (安全破解版)")
+st.subheader("🎬 隨身 YouTube 雙語單字神器")
 
 with st.expander("⚙️ 設定 Groq API Key", expanded=(not saved_key)):
     api_key = st.text_input("請輸入 Groq API Key (gsk_...)", value=saved_key, type="password")
@@ -485,7 +477,7 @@ if run_btn:
             
             if not use_cache:
                 try:
-                    with st.spinner("1/2 正在透過安全通道與 Cookie 驗證擷取英文字幕..."):
+                    with st.spinner("1/2 正在擷取英文字幕並由 AI 產出高階單字卡..."):
                         raw_segs = fetch_fast_transcript(vid)
                     final_data = translate_Subtitles(raw_segs, api_key)
                     if any(item.get("zh_text") != "（未翻譯）" for item in final_data):
