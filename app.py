@@ -9,7 +9,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 from youtube_transcript_api import YouTubeTranscriptApi
 
-st.set_page_config(page_title="AI 隨身雙語單字神器 (免 Cookie 智慧破解版)", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="AI 隨身雙語單字神器 (智慧破解版)", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
@@ -26,7 +26,6 @@ def fetch_fast_transcript(video_id):
     raw_data = None
     errors = []
 
-    # 通道 1：使用自定義瀏覽器偽裝 Header 的 API 請求
     try:
         api = YouTubeTranscriptApi()
         transcript_list = api.list(video_id)
@@ -39,7 +38,6 @@ def fetch_fast_transcript(video_id):
     except Exception as e:
         errors.append(str(e))
 
-    # 通道 2：如果被 403 擋下，自動切換備用解析函式
     if raw_data is None:
         try:
             raw_data = YouTubeTranscriptApi.get_transcript(video_id, languages=["en", "en-US", "en-GB"])
@@ -355,7 +353,7 @@ def render_interactive_player(video_id, data):
             }} else if (activeCard) {{
                 activeCard.classList.add('active');
             }}
-        }
+        }}
 
         const listEl = document.getElementById('transcript-list');
         subs.forEach((s, idx) => {{
