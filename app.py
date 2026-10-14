@@ -9,11 +9,11 @@ import streamlit as st
 import streamlit.components.v1 as components
 from youtube_transcript_api import YouTubeTranscriptApi
 
-st.set_page_config(page_title="AI 隨身雙語單字神器", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="AI 隨身雙語單字神器", layout="centered", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
-    .block-container { padding-top: 1.5rem !important; padding-bottom: 1rem !important; padding-left: 0.6rem !important; padding-right: 0.6rem !important; }
+    .block-container { padding-top: 1rem !important; padding-bottom: 1rem !important; padding-left: 0.5rem !important; padding-right: 0.5rem !important; background-color: #0f172a; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -21,7 +21,6 @@ def extract_video_id(url):
     match = re.search(r"(?:v=|\/|youtu\.be\/|shorts\/)([0-9A-Za-z_-]{11})", url)
     return match.group(1) if match else None
 
-# --- 字幕擷取核心 ---
 def fetch_fast_transcript(video_id):
     raw_data = None
     errors = []
@@ -168,7 +167,6 @@ def fetch_fast_transcript(video_id):
 
     return refined
 
-# --- 透過 Groq API 進行翻譯 ---
 def call_groq_api(payload, api_key):
     url = "https://api.groq.com/openai/v1/chat/completions"
 
@@ -293,38 +291,26 @@ def render_interactive_player(video_id, data):
     <head>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body {{ margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Microsoft JhengHei', sans-serif; background: #0f172a; color: #f8fafc; }}
-        .container {{ display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; padding: 10px; height: 84vh; box-sizing: border-box; }}
-        .left-col {{ display: flex; flex-direction: column; gap: 12px; height: 100%; }}
-        .video-wrapper {{ position: relative; width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 10px; overflow: hidden; flex-shrink: 0; }}
+        body {{ margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Microsoft JhengHei', sans-serif; background: #0f172a; color: #f8fafc; padding: 4px; }}
+        .main-container {{ display: flex; flex-direction: column; gap: 12px; max-width: 800px; margin: 0 auto; }}
+        .video-wrapper {{ position: relative; width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }}
         #player {{ width: 100%; height: 100%; }}
-        .live-box {{ background: #1e293b; border-radius: 10px; padding: 14px 16px; text-align: center; border: 2px solid #334155; flex-grow: 1; display: flex; flex-direction: column; justify-content: center; }}
-        .live-en {{ font-size: 20px; font-weight: 700; color: #38bdf8; margin-bottom: 8px; line-height: 1.35; }}
-        .live-zh {{ font-size: 16px; color: #e2e8f0; margin-bottom: 10px; }}
-        .live-vocab-area {{ display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; min-height: 30px; }}
-        .vocab-badge {{ background: #fef08a; color: #0f172a; padding: 4px 10px; border-radius: 6px; font-size: 14px; font-weight: bold; }}
-        .vocab-badge span {{ color: #b45309; font-weight: normal; margin: 0 3px; }}
-        .right-col {{ background: #1e293b; border-radius: 10px; padding: 12px; overflow-y: auto; height: 100%; box-sizing: border-box; border: 1px solid #334155; }}
-        .seg-card {{ padding: 12px; border-radius: 8px; margin-bottom: 8px; background: #0f172a; cursor: pointer; border-left: 4px solid transparent; transition: background 0.15s; }}
-        .seg-card:hover {{ background: #1e3a8a; }}
-        .seg-card.active {{ background: #1e3a8a; border-left: 4px solid #38bdf8; }}
-        .time-tag {{ font-size: 11px; color: #94a3b8; font-family: monospace; margin-bottom: 3px; }}
-        .card-en {{ font-size: 15px; font-weight: 600; color: #f1f5f9; margin-bottom: 4px; line-height: 1.4; }}
-        .card-zh {{ font-size: 13.5px; color: #cbd5e1; margin-bottom: 6px; }}
-        .mini-vocab {{ display: inline-block; background: #334155; color: #fde047; padding: 2px 7px; border-radius: 4px; font-size: 11.5px; margin-right: 5px; margin-top: 4px; }}
+        .transcript-list {{ display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; padding-right: 4px; }}
+        .seg-card {{ padding: 12px 14px; border-radius: 10px; background: #1e293b; cursor: pointer; border-left: 4px solid #334155; transition: all 0.2s ease; }}
+        .seg-card:hover {{ background: #2563eb; border-left-color: #60a5fa; }}
+        .seg-card.active {{ background: #1e3a8a; border-left: 4px solid #38bdf8; box-shadow: 0 0 10px rgba(56,189,248,0.2); }}
+        .time-tag {{ font-size: 11px; color: #94a3b8; font-family: monospace; margin-bottom: 4px; }}
+        .card-en {{ font-size: 16px; font-weight: 600; color: #f1f5f9; margin-bottom: 4px; line-height: 1.4; }}
+        .card-zh {{ font-size: 14px; color: #cbd5e1; margin-bottom: 6px; line-height: 1.35; }}
+        .vocab-container {{ display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }}
+        .mini-vocab {{ background: #334155; color: #fde047; padding: 3px 8px; border-radius: 6px; font-size: 12px; font-weight: 500; }}
+        .mini-vocab span {{ color: #cbd5e1; font-weight: normal; margin-left: 3px; }}
     </style>
     </head>
     <body>
-    <div class="container">
-        <div class="left-col">
-            <div class="video-wrapper"><div id="player"></div></div>
-            <div class="live-box">
-                <div class="live-en" id="live-en">▶ 點擊播放影片，字幕與單字將在此同步顯示</div>
-                <div class="live-zh" id="live-zh">點擊下方或右側句子，可直接跳轉該秒數！</div>
-                <div class="live-vocab-area" id="live-vocab"></div>
-            </div>
-        </div>
-        <div class="right-col" id="transcript-list"></div>
+    <div class="main-container">
+        <div class="video-wrapper"><div id="player"></div></div>
+        <div class="transcript-list" id="transcript-list"></div>
     </div>
     <script>
         const subs = {data_json};
@@ -335,22 +321,13 @@ def render_interactive_player(video_id, data):
         function activateSegment(idx, smoothScroll = true) {{
             if (idx < 0 || idx >= subs.length) return;
             activeIdx = idx;
-            const cur = subs[idx];
-            document.getElementById('live-en').innerText = cur.en_text;
-            document.getElementById('live-zh').innerText = cur.zh_text;
-            const vArea = document.getElementById('live-vocab');
-            if (cur.vocab_list && cur.vocab_list.length > 0) {{
-                vArea.innerHTML = cur.vocab_list.map(v => `<div class="vocab-badge">${{v.word}} <span>${{v.pos}}</span> ${{v.meaning}}</div>`).join('');
-            }} else {{
-                vArea.innerHTML = '';
-            }}
             document.querySelectorAll('.seg-card').forEach(el => el.classList.remove('active'));
             const activeCard = document.getElementById('seg-' + idx);
-            if (activeCard && smoothScroll) {{
+            if (activeCard) {{
                 activeCard.classList.add('active');
-                activeCard.scrollIntoView({{ behavior: 'smooth', block: 'nearest' }});
-            }} else if (activeCard) {{
-                activeCard.classList.add('active');
+                if (smoothScroll) {{
+                    activeCard.scrollIntoView({{ behavior: 'smooth', block: 'nearest' }});
+                }}
             }}
         }}
 
@@ -371,7 +348,7 @@ def render_interactive_player(video_id, data):
             const secs = Math.floor(s.start % 60).toString().padStart(2, '0');
             let vHtml = '';
             if (s.vocab_list && s.vocab_list.length > 0) {{
-                vHtml = '<div>' + s.vocab_list.map(v => `<span class="mini-vocab">💡 ${{v.word}} (${{v.pos}}) ${{v.meaning}}</span>`).join('') + '</div>';
+                vHtml = '<div class="vocab-container">' + s.vocab_list.map(v => `<span class="mini-vocab">💡 ${{v.word}}<span>(${{v.pos}}) ${{v.meaning}}</span></span>`).join('') + '</div>';
             }}
             card.innerHTML = `<div class="time-tag">[${{mins}}:${{secs}}]</div><div class="card-en">${{s.en_text}}</div><div class="card-zh">${{s.zh_text}}</div>${{vHtml}}`;
             listEl.appendChild(card);
@@ -411,7 +388,7 @@ def render_interactive_player(video_id, data):
     </body>
     </html>
     """
-    components.html(html_code, height=780)
+    components.html(html_code, height=720)
 
 KEY_FILE = "saved_api_key.txt"
 saved_key = ""
@@ -465,7 +442,7 @@ if run_btn:
             
             if not use_cache:
                 try:
-                    with st.spinner("1/2 正在透過多重通道擷取英文字幕..."):
+                    with st.spinner("1/2 正在擷取英文字幕並由 AI 產出高階單字卡..."):
                         raw_segs = fetch_fast_transcript(vid)
                     final_data = translate_Subtitles(raw_segs, api_key)
                     if any(item.get("zh_text") != "（未翻譯）" for item in final_data):
