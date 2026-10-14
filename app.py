@@ -26,13 +26,11 @@ def fetch_fast_transcript(video_id):
     raw_data = None
     errors = []
     
-    # 自動檢查專案資料夾裡是否有 cookies.txt
     cookie_file = "cookies.txt"
     has_cookies = os.path.exists(cookie_file)
 
     try:
         api = YouTubeTranscriptApi()
-        # 如果有 Cookie 檔案，帶入驗證以完美繞過 IP 封鎖
         if has_cookies:
             transcript_list = api.list(video_id, cookies=cookie_file)
         else:
@@ -355,7 +353,7 @@ def render_interactive_player(video_id, data):
             }} else if (activeCard) {{
                 activeCard.classList.add('active');
             }}
-        }
+        }}
 
         const listEl = document.getElementById('transcript-list');
         subs.forEach((s, idx) => {{
