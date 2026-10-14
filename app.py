@@ -368,24 +368,13 @@ def render_interactive_player(video_id, data):
                 if (Date.now() < manualSeekLockUntil) return;
                 const t = player.getCurrentTime();
                 
-                let idx = -1;
-                // 1. 精準比對當前秒數落在哪一個句子的範圍內
+                // 直接尋找當前時間 t 所對應的最新一句字幕索引
+                let idx = 0;
                 for (let i = 0; i < subs.length; i++) {{
-                    if (t >= subs[i].start && t <= subs[i].end + 0.2) {{
+                    if (t >= subs[i].start) {{
                         idx = i;
+                    }} else {{
                         break;
-                    }}
-                }}
-                // 2. 如果剛好在空檔，尋找最近的下一句作為預判
-                if (idx === -1) {{
-                    for (let i = 0; i < subs.length; i++) {{
-                        if (t < subs[i].start) {{
-                            idx = Math.max(0, i - 1);
-                            break;
-                        }}
-                    }}
-                    if (idx === -1 && subs.length > 0) {{
-                        idx = subs.length - 1;
                     }}
                 }}
 
