@@ -6,7 +6,6 @@ import time
 import streamlit as st
 import streamlit.components.v1 as components
 from youtube_transcript_api import YouTubeTranscriptApi
-import yt_dlp
 from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
@@ -19,7 +18,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 定義 AI 輸出資料結構 ---
 class VocabItem(BaseModel):
     word: str = Field(description="原句中較難的單字或關鍵片語（請還原為原型）")
     pos: str = Field(description="詞性，如 n., v., adj., phr.")
@@ -28,7 +26,7 @@ class VocabItem(BaseModel):
 class SubtitleSegment(BaseModel):
     id: int
     zh_text: str = Field(description="自然流暢、符合台灣用語習慣的繁體中文翻譯")
-    vocab_list: list[VocabItem] = Field(description="挑選 1~2 個值得學習的進階單字或片語（CEFR B2以上或實用詞彙），簡單句可留空陣列")
+    vocab_list: list[VocabItem] = Field(description="挑選 0~2 個值得學習的進階單字或片語，簡單句請留空陣列")
 
 class BatchOutput(BaseModel):
     segments: list[SubtitleSegment]
@@ -37,8 +35,7 @@ def extract_video_id(url):
     match = re.search(r"(?:v=|\/|youtu\.be\/|shorts\/)([0-9A-Za-z_-]{11})", url)
     return match.group(1) if match else None
 
-# --- 極速抓取時間軸與智慧斷句 ---
-def fetch_fast_transcript(video_id, max_words=14):
+def fetch_fast_transcript(video_id, max_words=15):
     try:
         ytt_api = YouTubeTranscriptApi()
         transcript_list = ytt_api.list(video_id)
@@ -75,7 +72,7 @@ def fetch_fast_transcript(video_id, max_words=14):
         curr.append(w)
         w_str = w["word"]
         is_end = w_str.endswith(('.', '?', '!'))
-        is_comma = w_str.endswith((',', ';', ':')) and len(curr) >= 7
+        is_comma = w_str.endswith((',', ';', ':')) and len(curr) >= 8
         if is_end or is_comma or len(curr) >= max_words:
             refined.append({
                 "id": seg_id,
@@ -94,21 +91,49 @@ def fetch_fast_transcript(video_id, max_words=14):
         })
     return refined
 
-# --- 穩定版批次翻譯與單字萃取（含自動重試與防截斷） ---
+# --- 自動找出你帳號底下目前還有免費額度的模型清單 ---
+def get_available_models(client):
+    candidates = [
+        "gemini-3.8-flash-lite",
+        "gemini-3.8-flash",
+        "gemini-3.8-pro",
+        "gemini-2.5-flash-lite",
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
+    ]
+    try:
+        api_models = []
+        for m in client.models.list():
+            name = m.name.replace("models/", "")
+            if "gemini" in name and ("flash" in name or "pro" in name) and "vision" not in name and "embedding" not in name and "audio" not in name and "tts" not in name and "image" not in name:
+                api_models.append(name)
+        # 將官方支援的模型排在前面，優先嘗試不同型號以避開單一模型每日20次限制
+        for c in reversed(candidates):
+            if c in api_models:
+                api_models.remove(c)
+                api_models.insert(0, c)
+        return api_models if api_models else candidates
+    except Exception:
+        return candidates
+
 def translate_Subtitles(segments, api_key):
     clean_key = api_key.strip()
     client = genai.Client(api_key=clean_key)
-    batch_size = 15  # 縮小批次確保 JSON 絕不被截斷
+    
+    # 超大批次：一次處理 100 句！整支影片只需要消耗 2~3 次 API 額度！
+    batch_size = 100
     final_results = []
-    progress_bar = st.progress(0, text="🤖 AI 正在進行語境翻譯與重點單字萃取...")
-    error_shown = False
+    model_pool = get_available_models(client)
+    current_model_idx = 0
+    
+    progress_bar = st.progress(0, text="🤖 AI 正在進行超大批次極速翻譯（極省 API 額度模式）...")
     
     for i in range(0, len(segments), batch_size):
         batch = segments[i:i+batch_size]
         payload = [{"id": s["id"], "en_text": s["en_text"]} for s in batch]
         prompt = f"""
         你是一位專業的台灣英文教學頻道主編（風格類似「巨人英文」）。
-        請將以下英文字幕翻譯成自然、道地的台灣繁體中文，並從每句中挑出 1~2 個中高級（B2-C2）、少見或實用的單字或片語。
+        請將以下英文字幕翻譯成自然、道地的台灣繁體中文，並從每句中挑出 0~2 個中高級或實用的單字片語（簡單句可留空陣列）。
         請確保回傳的 id 與輸入完全對應。
         
         字幕資料：
@@ -116,11 +141,14 @@ def translate_Subtitles(segments, api_key):
         """
         
         trans_map = {}
-        # 內建最多 3 次自動重試（應付免費版 API 瞬間流量限制）
-        for attempt in range(3):
+        success = False
+        
+        # 若當前模型遇到 429 額度用光或 503 忙碌，自動切換下一個可用模型！
+        for tries in range(len(model_pool)):
+            model_name = model_pool[(current_model_idx + tries) % len(model_pool)]
             try:
                 resp = client.models.generate_content(
-                    model="gemini-2.5-flash",
+                    model=model_name,
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         response_mime_type="application/json",
@@ -130,14 +158,17 @@ def translate_Subtitles(segments, api_key):
                 )
                 parsed = json.loads(resp.text)
                 trans_map = {item["id"]: item for item in parsed.get("segments", [])}
-                break  # 成功就跳出重試迴圈
+                current_model_idx = (current_model_idx + tries) % len(model_pool)
+                success = True
+                break
             except Exception as e:
-                if attempt < 2:
-                    time.sleep(3)  # 休息 3 秒再試
-                else:
-                    if not error_shown:
-                        st.error(f"⚠️ Gemini API 回報錯誤：{e}（請檢查 API Key 是否正確，或免費額度是否達上限）")
-                        error_shown = True
+                err_str = str(e)
+                if "503" in err_str:
+                    time.sleep(2)
+                continue
+                
+        if not success:
+            st.warning("⚠️ 這把 API Key 今日的免費模型額度已全數用盡！建議至 Google AI Studio 建立一個新 Project 換一把新 Key。")
 
         for s in batch:
             t = trans_map.get(s["id"], {})
@@ -146,11 +177,10 @@ def translate_Subtitles(segments, api_key):
                 "start": s["start"],
                 "end": s["end"],
                 "en_text": s["en_text"],
-                "zh_text": t.get("zh_text", "（翻譯生成失敗）"),
+                "zh_text": t.get("zh_text", "（額度已滿未翻譯）"),
                 "vocab_list": t.get("vocab_list", [])
             })
         progress_bar.progress(min((i + batch_size) / len(segments), 1.0), text=f"已處理 {min(i + batch_size, len(segments))} / {len(segments)} 句...")
-        time.sleep(1)  # 溫和呼叫，保護免費版 API 不被鎖
         
     progress_bar.empty()
     return final_results
@@ -275,7 +305,6 @@ def render_interactive_player(video_id, data):
     """
     components.html(html_code, height=780)
 
-# --- 讀取 API Key ---
 KEY_FILE = "saved_api_key.txt"
 saved_key = ""
 try:
@@ -297,7 +326,7 @@ with st.expander("⚙️ 設定 API Key 或管理快取", expanded=(not saved_ke
             f.write(api_key.strip())
         st.success("✅ 已儲存 API Key！")
         
-    if st.button("🗑️ 清除舊的失敗快取紀錄（若之前顯示翻譯失敗請點此）"):
+    if st.button("🗑️ 清除舊的快取紀錄（重刷翻譯必點）"):
         for f in glob.glob("cache_*.json"):
             os.remove(f)
         st.session_state.pop("subs_data", None)
@@ -320,12 +349,12 @@ if run_btn:
             st.error("❌ 網址格式無法辨識。")
         else:
             cache_file = f"cache_{vid}.json"
-            # 如果快取裡面有「翻譯生成失敗」，就自動重跑不讀舊快取
             use_cache = False
             if os.path.exists(cache_file):
                 with open(cache_file, "r", encoding="utf-8") as f:
                     cached_data = json.load(f)
-                if cached_data and cached_data[0].get("zh_text") != "（翻譯生成失敗）":
+                # 檢查快取是否完整翻譯
+                if cached_data and all(item.get("zh_text") not in ["（翻譯生成失敗）", "（額度已滿未翻譯）", item.get("en_text")] for item in cached_data[:10]):
                     use_cache = True
                     st.session_state["subs_data"] = cached_data
                     st.session_state["vid"] = vid
